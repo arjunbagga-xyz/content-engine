@@ -1,0 +1,90 @@
+# ============================================================================
+# CHARACTER / ACCOUNT CONFIG  —  TEMPLATE
+# ----------------------------------------------------------------------------
+# Copy this file to `characters.yaml` (same folder) and edit for YOUR accounts.
+# `characters.yaml` is gitignored and NEVER committed — keep your real configs
+# local. This example shows the two supported account shapes:
+#   1. faceless  -> YAML-driven debate/reaction reels (SpriteReactor)
+#   2. standard  -> influencer portrait / quote-card / reel accounts
+#
+# The pipeline is 100% config-driven: speakers, cameos, topic_universe,
+# prompt_templates, voices and sprites all live HERE, not in code.
+# Add a new account by copying a block and changing `id`/`name`/roster.
+# ============================================================================
+
+# ----------------------------------------------------------------------------
+# EXAMPLE 1 — faceless debate reel account (two fixed leads + optional cameos)
+# ----------------------------------------------------------------------------
+faceless_demo:
+  id: demo_debate
+  name: Demo Debate
+  status: active
+  type: faceless
+  pipeline: debate_2lead_cameo
+  # role / tone / visual_keywords drive the PromptBuilder + sprite selection
+  role: Global geopolitical / nature / cultural debate where both sides make solid points, with a sharp trading angle.
+  visual_keywords: debate, geopolitics, nature, culture, trading
+  platforms:
+  - instagram
+  # Speakers = the two fixed debate leads. Cameos = occasional guest voices.
+  speakers: [lead_a, lead_b]
+  cameos: [cameo_guest]
+  cameo_prob: 0.35
+  topic_universe:
+  - geopolitical
+  - nature
+  - cultural
+  - historical
+  trading_angle: true
+  tone: "funny, both sides make solid points, in their own classic talking style"
+  seg_range: [8, 16]
+  reel_style: contextual sprite overlay on gameplay (two leads alternate; occasional cameo drops in)
+  sprite_folder: data/sprites_clean
+  gameplay_folder: data/gameplay
+  # Multiple prompt templates; PromptBuilder picks one per turn and fills vars.
+  # Available vars: {{topic}} {{account_name}} {{role}} {{speaker}} {{persona}}
+  #   {{tone}} {{ctx}} {{recent_topics}} {{trading_note}}
+  prompt_templates:
+  - "TOPIC: {{topic}}\nACCOUNT: {{account_name}} — {{role}}\nTHIS SPEAKER: {{speaker}} — {{persona}}\nWHAT'S BEEN SAID:\n{{ctx}}\n\nYou are in a {{tone}}. Deliver ONE short take (1-2 sentences) as {{speaker}}, in your exact voice. {{trading_note}} Reference the topic or what someone just said. Be funny. Output ONLY the line, no quotes, no 'Speaker:' prefix."
+  - "TOPIC: {{topic}}\nTHIS SPEAKER: {{speaker}} — {{persona}}\nRECENT TOPICS WE'VE ALREADY DEBATED: {{recent_topics}}\nMake a fresh, funny point as {{speaker}} that we HAVEN'T covered. {{trading_note}} Output ONLY the line."
+  characters:
+    lead_a:
+      voice_persona: "alpha posturing, motivational but unhinged, says 'bro' unironically, confidence as a personality, makes money/discipline points"
+      sprite_tags: [lead_a]
+      tts_voice: en-US-GuyNeural
+    lead_b:
+      voice_persona: "oblivious child logic, declares things loudly, asks why 40 times, unshakeable confidence"
+      sprite_tags: [lead_b]
+      tts_voice: en-US-AriaNeural
+    cameo_guest:
+      voice_persona: "grandiose, deflects everything, calls things the best and the worst, never admits fault"
+      sprite_tags: [cameo_guest]
+      tts_voice: en-US-SteffanNeural
+
+# ----------------------------------------------------------------------------
+# EXAMPLE 2 — standard influencer account (portrait + quote-card + reel)
+# (shown for reference; the faceless path above is the proven one)
+# ----------------------------------------------------------------------------
+standard_demo:
+  id: demo_influencer
+  name: Demo Influencer
+  status: active
+  type: standard
+  role: Retro gaming hardware tinkerer sharing mod guides and hot takes.
+  visual_keywords: handheld retro gaming, soldering workbench
+  platforms:
+  - instagram
+  - x
+  voice: en-US-GuyNeural
+  themes:
+  - retro gaming
+  - hardware mods
+  - console repair
+  # Standard accounts declare per-host voices under characters.* (optional)
+  characters:
+    host:
+      voice_persona: "enthusiastic retro modder, explains clearly, loves translucent plastic"
+      tts_voice: en-US-GuyNeural
+  reel_style: host narrates over gameplay / b-roll
+  sprite_folder: data/sprites_clean
+  gameplay_folder: data/gameplay

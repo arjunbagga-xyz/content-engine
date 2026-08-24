@@ -67,6 +67,9 @@ data/
 logs/
 .env.local
 
+# Local account config (keep REAL accounts private; ship characters.example.yaml)
+config/characters.yaml
+
 # Packaging / scratch / binaries (not part of the shared source)
 content-engine.tar
 scratch/
