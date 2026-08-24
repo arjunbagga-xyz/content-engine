@@ -81,14 +81,37 @@ Return ONLY raw JSON list containing exactly {posts_per_day} objects. Do not inc
         plans = json.loads(clean_res)
         
         logger.info(f"Successfully generated {len(plans)} content plans for {profile['name']}.")
-        
+
+        # Coerce post_type for faceless/debate accounts: the debate IS a reel.
+        # The planner LLM may emit 'debate' (or other) for these; the media-gen
+        # and publish steps only handle 'reel', so force it here, config-driven.
+        try:
+            from src.generation.sprite_reactor import SpriteReactor
+            acct_conf = SpriteReactor._get_account(character_id) or {}
+            is_faceless = acct_conf.get("type") == "faceless" or "debate" in str(acct_conf.get("pipeline", ""))
+        except Exception:
+            is_faceless = False
+        if is_faceless:
+            for plan in plans:
+                if plan.get("platform", "").lower() == "instagram":
+                    # Faceless debate accounts publish REELS only (the debate IS a reel).
+                    # Coerce any instagram post_type (static/photo/tweet/debate/...) to 'reel'.
+                    pt = str(plan.get("post_type", "")).lower()
+                    if pt != "reel":
+                        plan["post_type"] = "reel"
+                        logger.info(f"Coerced faceless instagram post_type '{pt}' -> 'reel' for {character_id}")
+                # Drop non-instagram platforms (e.g. x) for faceless debate accounts
+                elif plan.get("platform", "").lower() not in ("instagram",):
+                    plan["platform"] = "instagram"
+                    logger.info(f"Forced faceless account platform -> 'instagram' for {character_id}")
+
         # Insert plans into SQLite queue
         queued_posts = []
         now = datetime.datetime.utcnow()
         for idx, plan in enumerate(plans):
             # Schedule posts separated by 4 hours
             scheduled_time = now + datetime.timedelta(hours=4 * (idx + 1))
-            
+
             post = ContentPost(
                 character_id=character_id,
                 platform=plan["platform"],
