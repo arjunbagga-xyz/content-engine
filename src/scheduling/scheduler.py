@@ -121,11 +121,28 @@ class ProductionScheduler:
             .all()
         )
 
-        if not pending_posts:
-            logger.info(f"No pending posts in queue for {char.name}. Planning a new calendar cycle...")
+        # Guard against over-planning: only plan a fresh day's batch if we don't
+        # already have today's quota of staged reels waiting to be published.
+        # Staged reels have a future scheduled_time and drip out through the day;
+        # without this guard the daemon would plan a new batch every 30-min tick.
+        from src.core.config import config as _cfg
+        posts_per_day = _cfg.load_settings().get("posts_per_day", 2)
+        today_start = datetime.datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        today_staged = (
+            self.db.query(ContentPost)
+            .filter(ContentPost.character_id == char.id)
+            .filter(ContentPost.state == "staged")
+            .filter(ContentPost.scheduled_time >= today_start)
+            .count()
+        )
+        if today_staged >= posts_per_day:
+            logger.info("Already have " + str(today_staged) + " reel(s) staged for today (quota=" + str(posts_per_day) + "); skipping new planning.")
+            pending_posts = []
+        elif not pending_posts:
+            logger.info("No pending posts in queue for " + char.name + ". Planning a new calendar cycle...")
             # Step 1 & 2: Trend Scouting & Content Planning
             pending_posts = await ContentPlanner.generate_content_plan(self.db, char.id)
-            logger.info(f"Generated {len(pending_posts)} new planned posts in queue.")
+            logger.info("Generated " + str(len(pending_posts)) + " new planned posts in queue.")
 
         # Step 3: Ghostwrite/Script each post
         for post in pending_posts:
@@ -205,33 +222,50 @@ class ProductionScheduler:
             post.media_type = "photo"
 
         elif post.post_type == "reel":
-            # Vertical Reel Video Composition — routed through the emotion-aware
-            # self-improving pipeline. It owns plan -> voice(RVC) -> sprite ->
-            # Whisper QA -> retry, and auto-selects the topic + character host
-            # from this account's declared themes + roster (Gap 1).
             from src.generation.reel_pipeline import run_reel_pipeline, select_post
+            from src.generation import sprite_reactor as SR
 
             video_output_path = str(config.OUTPUTS_DIR / f"{base_filename}_reel.mp4")
 
-            # Decide the post: if the planner already produced a caption, derive
-            # a topic from it; otherwise let the pipeline auto-select from the
-            # account's theme list. Either way the pipeline writes the final
-            # script + picks the character lens.
-            sel = select_post(char.id)
-            topic = (post.image_prompt or post.caption or sel["topic"]).strip()
-            character_key = sel["character_key"]
-            angle = sel.get("angle")
+            # Faceless debate accounts: use the proven produce_account_debate
+            # flow (two fixed leads + optional cameos, 8-16 turn debate per
+            # seg_range) — NOT run_reel_pipeline, which makes a single-character
+            # 3-line micro-hook and can pick a cameo as the sole host.
+            acct_conf = SR.SpriteReactor._get_account(char.id) or {}
+            is_faceless = acct_conf.get("type") == "faceless" or "debate" in str(acct_conf.get("pipeline", ""))
 
-            logger.info(f"Reel for {char.id}: topic={topic!r} character={character_key} angle={angle!r}")
-            res = await run_reel_pipeline(
-                char.id,
-                character_key=character_key,
-                topic=topic,
-                output_path=video_output_path,
-                num_lines=3,
-                max_retries=3,
-                angle=angle,
-            )
+            if is_faceless:
+                logger.info(f"Faceless debate reel for {char.id}: using produce_account_debate")
+                r = await SR.SpriteReactor.produce_account_debate(
+                    char.id,
+                    video_output_path,
+                    topic=None,
+                    num_turns=None,
+                )
+                res = {
+                    "passed": True,
+                    "path": r.get("path"),
+                    "script": r.get("lines") or [],
+                    "qa_report": {"wer": None, "min_sprite_conf": 1.0},
+                    "topic": r.get("topic"),
+                    "error": None,
+                }
+            else:
+                # Standard character: single-host emotion-aware reel pipeline.
+                sel = select_post(char.id)
+                topic = (post.image_prompt or post.caption or sel["topic"]).strip()
+                character_key = sel["character_key"]
+                angle = sel.get("angle")
+                logger.info(f"Reel for {char.id}: topic={topic!r} character={character_key} angle={angle!r}")
+                res = await run_reel_pipeline(
+                    char.id,
+                    character_key=character_key,
+                    topic=topic,
+                    output_path=video_output_path,
+                    num_lines=3,
+                    max_retries=3,
+                    angle=angle,
+                )
 
             if not res["passed"]:
                 # QA gate failed after all retries — do NOT stage a bad reel.
