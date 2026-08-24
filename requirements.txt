@@ -1,0 +1,33 @@
+# LLM APIs
+openai>=1.50.0
+anthropic==0.21.3
+
+# Image & Video Processing
+Pillow==10.2.0
+moviepy==1.0.3
+rembg==2.0.57
+opencv-python-headless==4.9.0.80
+
+# API Integrations
+edge-tts>=7.0.0
+instagrapi==1.17.6
+tweepy==4.14.0
+pytrends==4.9.2
+
+# Database & Memory
+chromadb==0.4.24
+sentence-transformers==2.5.1
+SQLAlchemy==2.0.28
+
+# Utilities
+pyyaml==6.0.1
+python-dotenv==1.0.1
+requests==2.31.0
+asyncio==3.4.3
+
+# Dashboard & Web Server
+fastapi>=0.100.0
+uvicorn>=0.22.0
+python-multipart>=0.0.6
+jinja2>=3.1.2
+aiofiles>=23.1.0

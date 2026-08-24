@@ -1,0 +1,81 @@
+# Central settings file for all tuning knobs and levers of the Content Engine pipeline
+# This file is loaded by the scheduler and other pipeline stages at runtime.
+# Changes here or via the Dashboard take effect immediately.
+
+# Quality Assurance
+qa_threshold: 7.0
+max_retries: 3
+
+# LLM Temperatures
+writer_temperature: 0.85
+planner_temperature: 0.70
+
+# Planner & Memory Windows
+trend_count: 3
+memory_window_posts: 3
+memory_window_events: 5
+
+# LLM Provider Priority Order for different task types
+provider_priority:
+  planning:
+    - gemini
+    - groq
+    - openrouter
+  creative_writing:
+    - groq
+    - gemini
+    - openrouter
+  qa_scoring:
+    - groq
+    - openrouter
+    - gemini
+  simple:
+    - groq
+    - gemini
+    - openrouter
+
+# Schedule and Queue Configs
+posts_per_day: 3
+time_slots:
+  - "08:00"
+  - "12:00"
+  - "18:00"
+posting_days:
+  - Monday
+  - Tuesday
+  - Wednesday
+  - Thursday
+  - Friday
+  - Saturday
+  - Sunday
+human_delay_min: 30
+human_delay_max: 120
+
+# Media Generation Knobs
+image_size: "1024x1024"
+subtitle_style: "Standard" # Hormozi, Standard, Minimal
+ffmpeg_quality: "Fast"     # Fast (ultrafast), Balanced (veryfast), HQ (medium)
+
+# Character visual/Pillow Quote Card custom styling configurations
+quote_card_styles:
+  maya_tech:
+    bg: "#0f0f1b"          # Deep space / dark coding theme
+    text: "#00f0ff"        # Cyber cyan primary text
+    border: "#ff007f"      # Neon pink border
+    secondary: "#ffffff"   # Footer text color
+    font_size: 48          # Text size
+    border_width: 6
+  luna_art:
+    bg: "#fcf8f2"          # Warm cozy cream
+    text: "#503e2c"        # Coffee espresso text
+    border: "#c9ada7"      # Dusty rose border
+    secondary: "#8a7a6b"   # Secondary text color
+    font_size: 44
+    border_width: 6
+  chloe_fit:
+    bg: "#1a1a1a"          # Slick matte black
+    text: "#adff2f"        # Neon lime green
+    border: "#333333"      # Charcoal border
+    secondary: "#aaaaaa"
+    font_size: 46
+    border_width: 8

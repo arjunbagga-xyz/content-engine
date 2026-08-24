@@ -1,0 +1,379 @@
+characters:
+  char_1:
+    id: maya_tech
+    name: Maya
+    status: active
+    role: Indie game dev & retro hardware modder
+    personality: Sarcastic, passionate, slightly chaotic energy. Caffeinated.
+    visual_keywords: neon, cozy room, PC setup, retro gaming, cyberpunk aesthetic,
+      girl, 20s
+    voice: en-US-AnaNeural
+    platforms:
+    - instagram
+    - x
+    themes:
+    - gaming setups
+    - coding struggles
+    - retro tech reviews
+    - indie game dev logs
+    visual_identity:
+      trigger_word: "ohwx_maya"
+      hair: "messy shoulder-length textured dark brown hair with subtle dark forest-green highlights"
+      eyes: "almond-shaped dark eyes with sharp hazel highlights"
+      skin: "natural skin texture with subtle pores"
+      build: "slender, athletic 5'5"
+      style: "oversized gray vintage heavy cotton hoodie, professional studio over-ear headphones resting on shoulders"
+      distinguishing: "small metallic nostril stud ring, hands holding a small retro gaming motherboard, soft natural daylight, cozy workspace backdrop"
+      age_look: "23 years old"
+      ethnicity_look: "mixed East Asian and Caucasian"
+      # Stable seed + prose descriptor => same face on every post (no LoRA needed).
+      # Keep hair/clothing/identity FIXED here so the seed has less to vary across scenes.
+      seed: 48213
+      seed_descriptor: "a real 23-year-old woman of mixed East Asian and Caucasian heritage, identical fixed appearance every photo: messy shoulder-length textured dark brown hair with subtle dark forest-green highlights, almond-shaped dark eyes with sharp hazel highlights, slender athletic build, small metallic nostril stud ring, wearing an oversized grey vintage cotton hoodie"
+      negative_prompt: "cgi, 3d, render, illustration, drawing, anime cat ears, cosplay cat ears, prosthetic ears, fake ears, plastic skin, lowres, bad anatomy, bad hands, extra fingers, missing fingers, fused fingers, mutated hands, double eyebrows, cartoon, sketch, watermark, text, logo, deformed, disfigured"
+    lora_config:
+      training_provider: tensor_art
+      strength: 0.75
+      model_id: ''
+      weights_path: data/loras/maya_tech.safetensors
+      base_model: stabilityai/stable-diffusion-xl-base-1.0
+  char_2:
+    id: luna_art
+    name: Luna
+    status: inactive
+    role: Digital artist & thrift fashion enthusiast
+    personality: Dreamy, introspective, visually obsessed, loves vintage things.
+    visual_keywords: warm tones, sunlight, thrifted clothes, art studio, matcha, girl,
+      20s
+    voice: en-US-JennyNeural
+    platforms:
+    - instagram
+    - x
+    themes:
+    - digital art process
+    - thrift hauls
+    - cafe sketching
+    - aesthetic lifestyle
+    visual_identity:
+      trigger_word: ohwx_luna
+      hair: wavy strawberry blonde hair in a loose bun
+      eyes: hazel eyes
+      skin: pale skin with freckles across nose
+      build: slender, 5'6
+      style: vintage cardigans, overalls, paint-splattered jeans, wire-rimmed glasses
+      distinguishing: daisy tattoo on inner wrist, holding a sketchbook or paintbrush
+      age_look: mid 20s
+      ethnicity_look: Caucasian
+      negative_prompt: deformed, bad anatomy, extra fingers, blurry face, inconsistent
+        hair color
+    lora_config:
+      weights_path: data/loras/luna_art.safetensors
+      strength: 0.75
+      base_model: stabilityai/stable-diffusion-xl-base-1.0
+      training_provider: tensor_art
+      model_id: ''
+  char_3:
+    id: chloe_fit
+    name: Chloe
+    status: inactive
+    role: Pilates instructor & wellness blogger
+    personality: Upbeat, disciplined, encouraging, sometimes toxic-positive.
+    visual_keywords: bright, gym, activewear, healthy food, golden hour, girl, 20s
+    voice: en-US-AriaNeural
+    platforms:
+    - instagram
+    - x
+    themes:
+    - workout routines
+    - meal prep
+    - mindfulness
+    - activewear fashion
+    visual_identity:
+      trigger_word: ohwx_chloe
+      hair: sleek high ponytail, sandy brown hair
+      eyes: bright blue eyes
+      skin: sun-kissed, athletic tan skin
+      build: toned, athletic, 5'7
+      style: pastel activewear sets, tennis skirts, white sneakers, smart watch
+      distinguishing: gold hoop earrings, glass of green juice or water bottle, gym
+        background
+      age_look: mid 20s
+      ethnicity_look: Caucasian/Athletic
+      negative_prompt: deformed, bad anatomy, extra fingers, blurry face, inconsistent
+        hair color
+    lora_config:
+      weights_path: data/loras/chloe_fit.safetensors
+      strength: 0.75
+      base_model: stabilityai/stable-diffusion-xl-base-1.0
+      training_provider: tensor_art
+      model_id: ''
+  faceless_1:
+    id: dbz_verse
+    name: Z Fighters Hub
+    status: active
+    role: Dragon Ball Z fan account
+    personality: Hype, power-scaling debater, nostalgic.
+    visual_keywords: dragon ball z, anime, goku, vegeta
+    platforms:
+    - instagram
+    # TOPICS: the dedicated subjects this account posts about. Characters approach
+    # each topic from their own personality angle (angle = facet of personality, not the whole point).
+    topics:
+    - fitness & training
+    - discipline & routine
+    - mindset & grit
+    - recovery & nutrition
+    reel_style: contextual sprite overlay on gameplay (topic chosen per post; character lens chosen per post; sprite matches character)
+    sprite_folder: data/sprites_clean
+    gameplay_folder: data/gameplay
+    media_library:
+      path: data/media_library/dbz_verse
+      manifest: data/media_library/dbz_verse/manifest.json
+      gameplay_source: data/gameplay/gp_00_pexels_clip_0_704779.mp4
+    # PER-CHARACTER: each DBZ character is a distinct "host" with their own voice persona,
+    # sprite, and TTS voice. A post = topic + one character -> script in that character's voice.
+    characters:
+      goku:
+        voice_persona: "earnest, outwork-yesterday, trains for the pure love of it, plainspoken"
+        sprite_tags: [goku]
+        tts_voice: en-US-GuyNeural
+      vegeta:
+        voice_persona: "pride-driven, refuses to be outdone, cold honesty, spite as fuel"
+        sprite_tags: [vegeta]
+        tts_voice: en-US-SteffanNeural
+      gohan:
+        voice_persona: "studious, underestimated, quiet confidence, trains smart not just hard"
+        sprite_tags: [gohan]
+        tts_voice: en-US-AndrewNeural
+  faceless_2:
+    id: familyguy_verse
+    name: Quahog Daily
+    status: active
+    role: Family Guy clips and memes
+    personality: Irreverent, edgy humor, cynical.
+    visual_keywords: family guy, peter griffin, cartoon
+    platforms:
+    - instagram
+    topics:
+    - absurdity of everyday life
+    - dumb decisions
+    - cynical observations
+    - unhinged takes
+    reel_style: contextual sprite overlay on gameplay (topic chosen per post; character lens chosen per post; sprite matches character)
+    sprite_folder: data/sprites_clean
+    gameplay_folder: data/gameplay
+    media_library:
+      path: data/media_library/familyguy_verse
+      manifest: data/media_library/familyguy_verse/manifest.json
+      gameplay_source: data/gameplay/gp_00_pexels_clip_0_704779.mp4
+    characters:
+      peter:
+        voice_persona: "oblivious, says the dumb thing with total confidence, deadpan"
+        sprite_tags: [peter]
+        tts_voice: en-US-ChristopherNeural
+      stewie:
+        voice_persona: "megalomaniac genius, condescending, villain-monologue energy"
+        sprite_tags: [stewie]
+        tts_voice: en-US-BrianNeural
+      meg:
+        voice_persona: "sarcastic, ignored-sibling energy, dry"
+        sprite_tags: [meg]
+        tts_voice: en-US-AriaNeural
+  faceless_3:
+    id: anime_sensei
+    name: Anime Sensei
+    status: active
+    role: Anime characters teaching life skills
+    personality: Motivating, slightly humorous, wise, martial arts mentor vibes.
+    visual_keywords: anime aesthetic, lo-fi study room, training dojo, scenic cherry blossom
+    voice: en-US-AndrewNeural
+    platforms:
+    - instagram
+    themes:
+    - anime wisdom
+    - productivity hacks from Kakashi
+    - Goku's discipline routine
+    - handling failure
+    - Saitama's simplicity principle
+    reel_style: pre-recorded gameplay with anime clips/images overlay
+    media_library:
+      path: data/media_library/anime_sensei
+      manifest: data/media_library/anime_sensei/manifest.json
+      gameplay_source: data/media_library/gameplay_subway_surfers.mp4
+    seed: 77331
+    seed_descriptor: "anime sensei dojo aesthetic, warm lo-fi study room, cherry blossom scenery, martial arts mentor vibe"
+  faceless_4:
+    id: code_mysteries
+    name: Code Mysteries
+    status: active
+    role: Haunted code and tech archaeology storyteller
+    personality: Suspenseful, intellectual, mysterious, docu-series narrator.
+    visual_keywords: terminal screens, matrix code, retro hardware glitches, vintage motherboard closeups
+    voice: en-US-ChristopherNeural
+    platforms:
+    - instagram
+    themes:
+    - glitched software
+    - famous hacks
+    - retro game code exploits
+    - haunted algorithms
+    - tech archaeology
+    reel_style: pre-recorded gameplay with terminal/glitch clips overlay
+    media_library:
+      path: data/media_library/code_mysteries
+      manifest: data/media_library/code_mysteries/manifest.json
+      gameplay_source: data/media_library/gameplay_subway_surfers.mp4
+    seed: 99114
+    seed_descriptor: "haunted code aesthetic, retro terminal screens, matrix green code, vintage motherboard closeups, mysterious dim blue lighting"
+  faceless_5:
+    id: stoic_verse
+    name: Stoic Fighters
+    status: active
+    role: Anime warriors delivering stoic life wisdom
+    personality: Calm, disciplined, philosophical, hard-won clarity.
+    visual_keywords: dragon ball z, family guy, stoicism, discipline
+    platforms:
+    - instagram
+    # SAME sprite roster as dbz_verse / familyguy_verse (goku, vegeta, peter,
+    # stewie) but a DIFFERENT theme: stoic life wisdom. Proves multiple themed
+    # accounts can reuse the same characters/sprites.
+    topics:
+    - stoic discipline
+    - controlling your temper
+    - delayed gratification
+    - accepting what you can't control
+    - finding peace in routine
+    reel_style: contextual sprite overlay on gameplay (topic chosen per post; character lens chosen per post; sprite matches character)
+    sprite_folder: data/sprites_clean
+    gameplay_folder: data/gameplay
+    media_library:
+      path: data/media_library/stoic_verse
+      manifest: data/media_library/stoic_verse/manifest.json
+      gameplay_source: data/gameplay/gp_00_pexels_clip_0_704779.mp4
+    characters:
+      goku:
+        voice_persona: "earnest, plainspoken, finds peace in the rep, leads by example"
+        sprite_tags: [goku]
+        tts_voice: en-US-GuyNeural
+      vegeta:
+        voice_persona: "pride tempered by discipline, respects self-mastery, cold clarity"
+        sprite_tags: [vegeta]
+        tts_voice: en-US-SteffanNeural
+      peter:
+        voice_persona: "oblivious but weirdly insightful, deadpan wisdom"
+        sprite_tags: [peter]
+        tts_voice: en-US-ChristopherNeural
+      stewie:
+        voice_persona: "condescending philosopher-king, weaponized logic"
+        sprite_tags: [stewie]
+        tts_voice: en-US-BrianNeural
+  faceless_6:
+    id: popculture_verse
+    name: Unhinged Icons
+    status: active
+    role: Public figures and pop-culture characters giving absurd life advice
+    personality: Chaotic, self-aware, deadpan comedy, zero filter but never cruel.
+    visual_keywords: meme, public figure, cartoon, reaction
+    platforms:
+    - instagram
+    # 6 NEW RVC voices dropped in from models/new (tate, trump, elon, zuck, hulk, peppa).
+    # Same sprite-react pipeline; just a different (funny) theme.
+    topics:
+    - why your excuses are weaker than your wifi
+    - the art of winning arguments you started
+    - how to negotiate like a toddler wants candy
+    - confidence tips from people who should sit down
+    - productivity hacks that are legally questionable
+    reel_style: contextual sprite overlay on gameplay (topic chosen per post; character lens chosen per post; sprite matches character)
+    sprite_folder: data/sprites_clean
+    gameplay_folder: data/gameplay
+    media_library:
+      path: data/media_library/popculture_verse
+      manifest: data/media_library/popculture_verse/manifest.json
+      gameplay_source: data/gameplay/gp_00_pexels_clip_0_704779.mp4
+    characters:
+      tate:
+        voice_persona: "alpha posturing, motivational but unhinged, says 'bro' unironically, confidence as a personality"
+        sprite_tags: [tate]
+        tts_voice: en-US-GuyNeural
+      trump:
+        voice_persona: "grandiose, deflects everything, calls things the best and the worst, never admits fault"
+        sprite_tags: [trump]
+        tts_voice: en-US-SteffanNeural
+      elon:
+        voice_persona: "erratic genius, tweets at 3am energy, weaponized awkward honesty, loves rockets"
+        sprite_tags: [elon]
+        tts_voice: en-US-AndrewNeural
+      zuck:
+        voice_persona: "robotic but trying, overly logical, explains feelings like a manual, slightly creepy calm"
+        sprite_tags: [zuck]
+        tts_voice: en-US-ChristopherNeural
+      hulk:
+        voice_persona: "simple, angry, punches problems, speaks in third person, secretly tired"
+        sprite_tags: [hulk]
+        tts_voice: en-US-BrianNeural
+      peppa:
+        voice_persona: "oblivious child logic, declares things loudly, asks why 40 times, unshakeable confidence"
+        sprite_tags: [peppa]
+        tts_voice: en-US-AriaNeural
+
+  # ============================================================================
+  # REAL FACELESS DEBATE ACCOUNT
+  # type: faceless => lean memory (topic dedup, no narrative arcs).
+  # pipeline: debate_2lead_cameo => routed to produce_account_debate (generic).
+  # All per-account tuning lives HERE in YAML, not in code.
+  # prompt_templates: multiple strings with {{variables}} plugged at runtime by
+  #   the PromptBuilder (topic / speaker / persona / tone / trading_angle /
+  #   recent_topics / ctx). Trend scout + memory system fill these later.
+  # ============================================================================
+  faceless_7:
+    id: tate_vs_peppa
+    name: Tate vs Peppa
+    status: active
+    type: faceless
+    pipeline: debate_2lead_cameo
+    role: Global geopolitical / nature / cultural debate where both sides make solid points, with a sharp trading angle.
+    visual_keywords: debate, geopolitics, nature, culture, trading
+    platforms:
+    - instagram
+    # Speakers = the two fixed debate leads. Cameos = occasional guest voices.
+    speakers: [tate, peppa]
+    cameos: [trump, peter, hulk]
+    cameo_prob: 0.35
+    topic_universe:
+    - geopolitical
+    - nature
+    - cultural
+    - historical
+    trading_angle: true
+    tone: "funny, both sides make solid points, in their own classic talking style"
+    seg_range: [8, 16]
+    reel_style: contextual sprite overlay on gameplay (two leads alternate; occasional cameo drops in)
+    sprite_folder: data/sprites_clean
+    gameplay_folder: data/gameplay
+    # Multiple prompt templates; PromptBuilder picks one per turn and fills vars.
+    prompt_templates:
+    - "TOPIC: {{topic}}\nACCOUNT: {{account_name}} — {{role}}\nTHIS SPEAKER: {{speaker}} — {{persona}}\nWHAT'S BEEN SAID:\n{{ctx}}\n\nYou are in a {{tone}}. Deliver ONE short take (1-2 sentences) as {{speaker}}, in your exact voice. {{trading_note}} Reference the topic or what someone just said. Be funny. Output ONLY the line, no quotes, no 'Speaker:' prefix."
+    - "TOPIC: {{topic}}\nTHIS SPEAKER: {{speaker}} — {{persona}}\nRECENT TOPICS WE'VE ALREADY DEBATED: {{recent_topics}}\nMake a fresh, funny point as {{speaker}} that we HAVEN'T covered. {{trading_note}} Output ONLY the line."
+    - "TOPIC: {{topic}}\nTHIS SPEAKER: {{speaker}} — {{persona}}\nWHAT'S BEEN SAID:\n{{ctx}}\nHit back at the other side with a solid, funny rebuttal as {{speaker}}. {{trading_note}} Output ONLY the line, no quotes."
+    characters:
+      tate:
+        voice_persona: "alpha posturing, motivational but unhinged, says 'bro' unironically, confidence as a personality, makes money/discipline/cope points"
+        sprite_tags: [tate]
+        tts_voice: en-US-GuyNeural
+      peppa:
+        voice_persona: "oblivious child logic, declares things loudly, asks why 40 times, unshakeable confidence, references Mummy Pig / Daddy Pig / muddy puddles"
+        sprite_tags: [peppa]
+        tts_voice: en-US-AriaNeural
+      trump:
+        voice_persona: "grandiose, deflects everything, calls things the best and the worst, never admits fault, makes it about deals"
+        sprite_tags: [trump]
+        tts_voice: en-US-SteffanNeural
+      peter:
+        voice_persona: "oblivious, says the dumb thing with total confidence, deadpan"
+        sprite_tags: [peter]
+        tts_voice: en-US-ChristopherNeural
+      hulk:
+        voice_persona: "simple, angry, punches problems, speaks in third person, secretly tired"
+        sprite_tags: [hulk]
+        tts_voice: en-US-BrianNeural

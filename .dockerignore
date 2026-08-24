@@ -1,0 +1,29 @@
+# Never ship these into the build context or image
+.venv/
+node_modules/
+outputs/
+logs/
+__pycache__/
+*.pyc
+.env
+.env.local
+*.sqlite3
+*.sqlite
+.git/
+.github/
+# Unrelated stray files NOT part of the engine
+bjj_camila_lora_step1.1.7z
+bjj_camila_lora_step1.1.png
+# Old/corrupt backups
+ContentEngine_Backup_*.zip
+
+# Exclude data/ by default (regenerable, large), but KEEP the sprite + gameplay base-media
+# needed for the faceless/sprite pipeline to work out of the box.
+data/
+!data/sprites/
+!data/sprites_clean/
+!data/gameplay/
+
+# Docker own files (avoid recursion)
+Dockerfile
+.dockerignore

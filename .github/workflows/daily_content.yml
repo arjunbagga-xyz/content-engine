@@ -1,0 +1,75 @@
+name: Daily Content Automation
+
+on:
+  schedule:
+    - cron: '0 6 * * *'   # 6 AM UTC (Morning slot)
+    - cron: '0 12 * * *'  # 12 PM UTC (Midday slot)
+    - cron: '0 18 * * *'  # 6 PM UTC (Evening slot)
+  workflow_dispatch:      # Allows manual one-click trigger from GitHub Actions tab
+
+jobs:
+  automate-content:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write     # Required to push database state updates back to main branch
+    
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      - name: Install FFmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+
+      - name: Run Content Pipeline Orchestrator
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
+          SAMBANOVA_API_KEY: ${{ secrets.SAMBANOVA_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          LEONARDO_API_KEY: ${{ secrets.LEONARDO_API_KEY }}
+          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+          DEEPGRAM_API_KEY: ${{ secrets.DEEPGRAM_API_KEY }}
+          TENSOR_ART_API_KEY: ${{ secrets.TENSOR_ART_API_KEY }}
+          FAL_API_KEY: ${{ secrets.FAL_API_KEY }}
+          CIVITAI_API_KEY: ${{ secrets.CIVITAI_API_KEY }}
+          WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
+          
+          # Instagram Credentials
+          IG_USERNAME_MAYA_TECH: ${{ secrets.IG_USERNAME_MAYA_TECH }}
+          IG_PASSWORD_MAYA_TECH: ${{ secrets.IG_PASSWORD_MAYA_TECH }}
+          IG_USERNAME_DBZ_VERSE: ${{ secrets.IG_USERNAME_DBZ_VERSE }}
+          IG_PASSWORD_DBZ_VERSE: ${{ secrets.IG_PASSWORD_DBZ_VERSE }}
+          IG_USERNAME_FAMILYGUY_VERSE: ${{ secrets.IG_USERNAME_FAMILYGUY_VERSE }}
+          IG_PASSWORD_FAMILYGUY_VERSE: ${{ secrets.IG_PASSWORD_FAMILYGUY_VERSE }}
+          
+          # X/Twitter Credentials
+          X_CONSUMER_KEY_MAYA_TECH: ${{ secrets.X_CONSUMER_KEY_MAYA_TECH }}
+          X_CONSUMER_SECRET_MAYA_TECH: ${{ secrets.X_CONSUMER_SECRET_MAYA_TECH }}
+          X_ACCESS_TOKEN_MAYA_TECH: ${{ secrets.X_ACCESS_TOKEN_MAYA_TECH }}
+          X_ACCESS_TOKEN_SECRET_MAYA_TECH: ${{ secrets.X_ACCESS_TOKEN_SECRET_MAYA_TECH }}
+          X_BEARER_TOKEN_MAYA_TECH: ${{ secrets.X_BEARER_TOKEN_MAYA_TECH }}
+        run: |
+          # Execute scheduling pipeline
+          python src/scheduling/scheduler.py
+
+      - name: Commit Database State & Sessions
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/content_engine.sqlite3 data/sessions/
+          git commit -m "chore: Auto-update queue database and login sessions [skip ci]" || echo "No state changes to commit"
+          git push
