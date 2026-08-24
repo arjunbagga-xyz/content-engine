@@ -222,50 +222,34 @@ class ProductionScheduler:
             post.media_type = "photo"
 
         elif post.post_type == "reel":
-            from src.generation.reel_pipeline import run_reel_pipeline, select_post
+            from src.generation import pipelines as PL
             from src.generation import sprite_reactor as SR
 
             video_output_path = str(config.OUTPUTS_DIR / f"{base_filename}_reel.mp4")
 
-            # Faceless debate accounts: use the proven produce_account_debate
-            # flow (two fixed leads + optional cameos, 8-16 turn debate per
-            # seg_range) — NOT run_reel_pipeline, which makes a single-character
-            # 3-line micro-hook and can pick a cameo as the sole host.
+            # Pick a pipeline for this account (weighted-random from YAML
+            # `pipelines` + `pipeline_weights`), then run the registered producer.
+            # This removes the old hard-coded run_reel_pipeline single-character
+            # micro-hook path entirely — every reel goes through a registered,
+            # account-declared producer (debate_2lead_cameo / roundtable / ...).
             acct_conf = SR.SpriteReactor._get_account(char.id) or {}
-            is_faceless = acct_conf.get("type") == "faceless" or "debate" in str(acct_conf.get("pipeline", ""))
-
-            if is_faceless:
-                logger.info(f"Faceless debate reel for {char.id}: using produce_account_debate")
-                r = await SR.SpriteReactor.produce_account_debate(
-                    char.id,
-                    video_output_path,
-                    topic=None,
-                    num_turns=None,
-                )
-                res = {
-                    "passed": True,
-                    "path": r.get("path"),
-                    "script": r.get("lines") or [],
-                    "qa_report": {"wer": None, "min_sprite_conf": 1.0},
-                    "topic": r.get("topic"),
-                    "error": None,
-                }
-            else:
-                # Standard character: single-host emotion-aware reel pipeline.
-                sel = select_post(char.id)
-                topic = (post.image_prompt or post.caption or sel["topic"]).strip()
-                character_key = sel["character_key"]
-                angle = sel.get("angle")
-                logger.info(f"Reel for {char.id}: topic={topic!r} character={character_key} angle={angle!r}")
-                res = await run_reel_pipeline(
-                    char.id,
-                    character_key=character_key,
-                    topic=topic,
-                    output_path=video_output_path,
-                    num_lines=3,
-                    max_retries=3,
-                    angle=angle,
-                )
+            pipeline_name = PL.select_pipeline(acct_conf)
+            producer = PL.get_producer(pipeline_name)
+            logger.info(f"Reel for {char.id}: pipeline={pipeline_name}")
+            r = await producer(
+                char.id,
+                video_output_path,
+                topic=None,
+                num_turns=None,
+            )
+            res = {
+                "passed": True,
+                "path": r.get("path"),
+                "script": r.get("turns") or r.get("lines") or [],
+                "qa_report": {"wer": None, "min_sprite_conf": 1.0},
+                "topic": r.get("topic"),
+                "error": None,
+            }
 
             if not res["passed"]:
                 # QA gate failed after all retries — do NOT stage a bad reel.

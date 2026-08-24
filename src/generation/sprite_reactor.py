@@ -586,39 +586,71 @@ class SpriteReactor:
         return await SpriteReactor.produce_account_debate(
             "tate_vs_peppa", output_path, topic=topic, sprite_scale=sprite_scale, num_turns=num_turns)
 
+    # Default roundtable prompts (used when account YAML omits prompt_templates.roundtable).
+    _RT_NORMAL_DEFAULT = (
+        "TOPIC: {topic}\n"
+        "THIS SPEAKER: {sp} \u2014 {persona}\n"
+        "WHAT'S BEEN SAID SO FAR:\n{ctx}\n\n"
+        "You are in a {tone}. Deliver ONE short take (1-2 sentences) as {sp}, in their exact "
+        "voice and worldview. Be funny and a bit mysterious, stay in character, reference the "
+        "topic or what someone just said. Output ONLY the line, no quotes, no ' Speaker:' prefix."
+    )
+    _RT_HECKLE_DEFAULT = (
+        "TOPIC: {topic}\n"
+        "THIS SPEAKER: {sp} \u2014 {persona}\n"
+        "WHAT'S BEEN SAID:\n{ctx}\n\n"
+        "You are heckling / interrupting with a completely OUT-OF-CONTEXT, chaotic one-liner as {sp}, "
+        "in their exact voice. No setup, just a random funny interruption (complain about snacks, "
+        "the venue, another speaker, your own problems). Output ONLY the line, no quotes."
+    )
+
     @staticmethod
-    async def produce_roundtable(output_path: str, topic: str,
-                                 speakers: List[str] = None,
-                                 num_turns: int = 18,
+    async def produce_roundtable(account_id: str, output_path: str, topic: str = None,
+                                 num_turns: int = None,
                                  sprite_scale: float = 0.35,
-                                 heckle_ratio: float = 0.0,
-                                 tone: str = "funny chaotic panel debate") -> Dict[str, Any]:
-        """Produce a multi-character DEBATE / roundtable reel (e.g. ~5 min) where
-        every turn is spoken by a different character in their OWN RVC voice + sprite.
+                                 heckle_ratio: float = None,
+                                 tone: str = None) -> Dict[str, Any]:
+        """Produce a multi-character roundtable reel (single-host sprite per turn,
+        stitched into one vertical reel). Fully YAML-driven: reads the account's
+        speakers + cameos, topic_universe, tone, heckle_ratio and
+        prompt_templates.roundtable / prompt_templates.roundtable_heckle.
 
-        Unlike produce_debate (2 side-by-side speakers), this renders each turn
-        single-host (one speaker's sprite + voice at a time) and stitches all
-        segments into one vertical reel. Scales to any number of speakers.
-
-        speakers: list of character keys. If None, ALL characters across every
-        account are used (new + old). Each gets a roughly equal number of turns.
-        heckle_ratio: fraction of turns that are out-of-context heckles/interruptions
-        instead of on-topic takes (0.0 = none). tone: style hint for the LLM.
+        speakers = account.speakers + account.cameos (NOT a global merge).
+        topic auto-picked from topic_universe when omitted.
         """
-        # Build a merged roster of every character across all accounts.
-        all_accounts = config.load_characters()
+        char_conf = SpriteReactor._get_account(account_id)
+        if not char_conf:
+            raise ValueError(f"Account {account_id} not found in characters.yaml")
+        # Roster = this account's characters only.
         roster = {}
-        for acc_id, acc in all_accounts.items():
-            for ck, cd in (acc.get("characters") or {}).items():
-                roster[ck] = {
-                    "persona": cd.get("voice_persona", ""),
-                    "sprite_tags": cd.get("sprite_tags", [ck]),
-                    "tts_voice": cd.get("tts_voice", "en-US-GuyNeural"),
-                }
-        if speakers:
-            roster = {k: v for k, v in roster.items() if k in speakers}
+        for ck, cd in (char_conf.get("characters") or {}).items():
+            roster[ck] = {
+                "persona": cd.get("voice_persona", ""),
+                "sprite_tags": cd.get("sprite_tags", [ck]),
+                "tts_voice": cd.get("tts_voice", "en-US-GuyNeural"),
+            }
+        # Speaker pool = account's speakers + cameos.
+        speakers = list(char_conf.get("speakers", [])) + list(char_conf.get("cameos", []))
+        speakers = [s for s in speakers if s in roster]
+        if not speakers:
+            speakers = list(roster.keys())[:3]
         if not roster:
             raise ValueError("No speakers resolved for roundtable")
+        # Topic from the account's topic_universe.
+        if not topic:
+            universe = char_conf.get("topic_universe") or []
+            topic = random.choice(universe) if universe else "a surprising global event"
+        # Tone + heckle ratio from YAML (sensible fallbacks).
+        tone = tone or char_conf.get("tone", "funny chaotic panel debate")
+        heckle_ratio = heckle_ratio if heckle_ratio is not None else float(char_conf.get("heckle_ratio", 0.0))
+        # Prompt templates from YAML (per-pipeline list); fallback to built-ins.
+        pt = char_conf.get("prompt_templates", {}) or {}
+        rt_templates = pt.get("roundtable") or [_RT_NORMAL_DEFAULT]
+        if isinstance(rt_templates, str):
+            rt_templates = [rt_templates]
+        rt_heckle = pt.get("roundtable_heckle") or _RT_HECKLE_DEFAULT
+        if isinstance(rt_heckle, str):
+            rt_heckle = [rt_heckle]
 
         speaker_order = list(roster.keys())
         random.shuffle(speaker_order)
@@ -632,24 +664,10 @@ class SpriteReactor:
             is_heckle = (random.random() < heckle_ratio)
             ctx = "\n".join(f"- {c}" for c in ctx_lines[-4:]) if ctx_lines else "(start)"
             if is_heckle:
-                prompt = (
-                    f"TOPIC: {topic}\nTHIS SPEAKER: {sp} — {persona}\n"
-                    f"WHAT'S BEEN SAID:\n{ctx}\n\n"
-                    f"You are heckling / interrupting with a completely OUT-OF-CONTEXT, "
-                    f"chaotic one-liner as {sp}, in their exact voice. No setup, just a "
-                    f"random funny interruption (complain about snacks, the venue, another "
-                    f"speaker, your own problems). Output ONLY the line, no quotes."
-                )
+                prompt = random.choice(rt_heckle).format(topic=topic, sp=sp, persona=persona, ctx=ctx)
             else:
-                prompt = (
-                    f"TOPIC: {topic}\n"
-                    f"THIS SPEAKER: {sp} — {persona}\n"
-                    f"WHAT'S BEEN SAID SO FAR:\n{ctx}\n\n"
-                    f"You are in a {tone}. Deliver ONE short take "
-                    f"(1-2 sentences) as {sp}, in their exact voice and worldview. Be funny "
-                    f"and a bit mysterious, stay in character, reference the topic or what "
-                    f"someone just said. Output ONLY the line, no quotes, no ' Speaker:' prefix."
-                )
+                prompt = random.choice(rt_templates).format(
+                    topic=topic, sp=sp, persona=persona, ctx=ctx, tone=tone)
             try:
                 text = None
                 for attempt in range(3):
