@@ -1,10 +1,20 @@
 """Minimal HTTP file server with HTTP Range support (Meta's transcoder
-fetches videos via byte-range requests; Python's http.server does not)."""
+fetches videos via byte-range requests; Python's http.server does not).
+
+IMPORTANT: serve() must NOT os.chdir() the global process working directory
+-- that corrupts relative paths (e.g. post.media_path) for the rest of the
+daemon. We serve from an explicit directory instead.
+"""
 import os
+from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
 
 class RangedHandler(SimpleHTTPRequestHandler):
+    def __init__(self, *args, directory=None, **kwargs):
+        self._directory = directory
+        super().__init__(*args, directory=directory, **kwargs)
+
     def end_headers(self):
         self.send_header("Accept-Ranges", "bytes")
         super().end_headers()
@@ -49,5 +59,10 @@ class RangedHandler(SimpleHTTPRequestHandler):
 
 
 def serve(directory: str, port: int):
-    os.chdir(directory)
-    return ThreadingHTTPServer(("127.0.0.1", port), RangedHandler)
+    """Start a ThreadingHTTPServer on 127.0.0.1:port serving `directory`.
+
+    Does NOT chdir the process -- serves from an explicit directory so the
+    caller's working directory is untouched.
+    """
+    handler = partial(RangedHandler, directory=directory)
+    return ThreadingHTTPServer(("127.0.0.1", port), handler)

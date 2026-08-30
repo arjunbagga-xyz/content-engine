@@ -12,6 +12,41 @@ from src.core.config import config
 logger = logging.getLogger("content_engine.video_generator")
 
 
+# --- Hardware encoder selection (NVENC on the 1650, CPU fallback otherwise) ---
+# NVENC is a dedicated encoder block on the GTX 1650, independent of its CUDA
+# cores. It encodes 1080x1920 H.264 at ~10x realtime with ~zero CPU load. We
+# probe ffmpeg once for the h264_nvenc encoder; if absent we fall back to the
+# old software libx264 (slow but always available).
+_NVENC_OK = None  # None = not probed yet
+
+
+def _use_nvenc() -> bool:
+    global _NVENC_OK
+    if _NVENC_OK is None:
+        try:
+            out = subprocess.run(
+                ["ffmpeg", "-hide_banner", "-encoders"],
+                capture_output=True, text=True, timeout=30,
+            ).stdout
+            _NVENC_OK = "h264_nvenc" in out
+        except Exception:
+            _NVENC_OK = False
+        if _NVENC_OK:
+            logger.info("video: h264_nvenc available -> using NVENC hardware encode")
+        else:
+            logger.info("video: h264_nvenc NOT available -> falling back to libx264")
+    return _NVENC_OK
+
+
+def vcodec_args() -> list:
+    """Return the -c:v ... args for an ffmpeg encode, preferring NVENC."""
+    if _use_nvenc():
+        # -cq 23 ~= libx264 -crf 26 visually; -preset p1 = fastest.
+        # -tune ull (ultra-low-latency) skips lookahead for speed.
+        return ["-c:v", "h264_nvenc", "-preset", "p1", "-tune", "ull", "-cq", "23"]
+    return ["-c:v", "libx264", "-preset", "ultrafast", "-crf", "26"]
+
+
 def _character_key_of(sprite_path: str) -> str:
     """Derive the character key from a sprite path under data/characters/<char>/sprites/."""
     from pathlib import Path
@@ -300,8 +335,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             "-i", audio_path,
             "-filter_complex", vfilter_sub,
             "-map", "[v]", "-map", "1:a",
-            "-c:v", "libx264", "-preset", "ultrafast",
-            "-crf", "26",
+            *vcodec_args(),
             "-c:a", "aac", "-b:a", "128k",
             "-shortest",
             output_mp4_path
@@ -315,8 +349,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         nosub_cmd.extend([
             "-i", audio_path,
             "-vf", "scale=w=1080:h=1920:force_original_aspect_ratio=increase,crop=1080:1920",
-            "-c:v", "libx264", "-preset", "ultrafast",
-            "-crf", "26",
+            *vcodec_args(),
             "-c:a", "aac", "-b:a", "128k",
             "-shortest",
             output_mp4_path
@@ -349,9 +382,15 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         """
         import asyncio as _asyncio
         from PIL import Image
-        ass_path = output_mp4_path.replace(".mp4", ".ass")
+        # Write the ASS to a SPACE-FREE temp dir and reference it by basename. ffmpeg's
+        # libass `subtitles` filter cannot resolve Windows paths that contain a drive colon
+        # and/or a space (e.g. "D:\Open Projects\...\x.ass") — it silently drops the track.
+        # Running ffmpeg with cwd=<tempdir> and a relative filename is the robust fix.
+        import tempfile as _tempfile
+        _ass_basename = f"_sub_{abs(hash(output_mp4_path))}_{os.getpid()}.ass"
+        ass_path = os.path.join(_tempfile.gettempdir(), _ass_basename)
         VideoGenerator.generate_ass_subtitles(words, ass_path, character_key=_character_key_of(sprite_path))
-        escaped_ass_path = ass_path.replace("\\", "/").replace(":", "\\:")
+        escaped_ass_path = _ass_basename  # relative to cwd below
 
         logger.info(f"Composing sprite-reel: sprite={sprite_path}, gameplay={gameplay_video_path}")
 
@@ -374,6 +413,11 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             target_w = int(sp_img.width * ratio)
             sp_img = sp_img.resize((target_w, target_h), Image.Resampling.LANCZOS)
             tmp_sprite = str(Path(output_mp4_path).with_suffix("")) + "_sprite_overlay.png"
+            # Keep the sprite in the space-free temp dir too: ffmpeg's libavformat struggles
+            # to resolve absolute Windows paths (drive colon + space) when cwd is changed,
+            # so ALL per-render temp artifacts live in tempdir and are referenced relatively.
+            tmp_sprite = os.path.join(_tempfile.gettempdir(),
+                                      f"_spr_{abs(hash(output_mp4_path))}_{os.getpid()}.png")
             sp_img.save(tmp_sprite)
         except Exception as e:
             logger.error(f"Sprite pre-scale failed: {e}")
@@ -388,47 +432,67 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             x_pos, y_pos = "(W-overlay_w)/2", "H-overlay_h-80"
 
         grade_filter = _grade_filter(grade)
+        # Normalize the gameplay clip to the reel canvas (1080x1920) BEFORE overlaying the
+        # sprite. The sprite is scaled against a 1920px-frame assumption (target_h = 1920 *
+        # sprite_scale), so if the source clip isn't 1080x1920 the sprite overflows/clips.
+        # Normalizing first makes placement deterministic regardless of which gameplay
+        # clip was randomly selected (e.g. subway 288x640, beat saber 608x1080, minecraft 720x1280).
+        norm = "[0:v]scale=1080:1920:force_original_aspect_ratio=decrease," \
+               "pad=1080:1920:(ow-iw)/2:(oh-ih)/2,setsar=1[bg];"
         if grade_filter:
             filter_str = (
-                f"[0:v][1:v]overlay={x_pos}:{y_pos}[stacked];"
+                f"{norm}[bg][1:v]overlay={x_pos}:{y_pos}[stacked];"
                 f"[stacked]{grade_filter}[graded];"
                 f"[graded]subtitles='{escaped_ass_path}'[v]"
             )
         else:
             filter_str = (
-                f"[0:v][1:v]overlay={x_pos}:{y_pos}[stacked];"
+                f"{norm}[bg][1:v]overlay={x_pos}:{y_pos}[stacked];"
                 f"[stacked]subtitles='{escaped_ass_path}'[v]"
             )
 
+        # Media inputs must be ABSOLUTE: with cwd=tempdir (so the relative ASS resolves),
+        # relative gameplay/sprite/audio paths would break. Abs paths work regardless of cwd.
+        _gp_abs = os.path.abspath(gameplay_video_path)
+        _sp_abs = os.path.abspath(tmp_sprite)
+        _sp_rel = os.path.basename(tmp_sprite)  # relative -> resolves via cwd=tempdir (libass-safe)
+        _au_abs = os.path.abspath(audio_path)
+        _out_abs = os.path.abspath(output_mp4_path)
         sub_cmd = ["ffmpeg", "-y",
-                   "-stream_loop", "-1", "-i", gameplay_video_path,
-                   "-i", tmp_sprite,
-                   "-i", audio_path,
+                   "-stream_loop", "-1", "-i", _gp_abs,
+                   "-i", _sp_rel,
+                   "-i", _au_abs,
                    "-filter_complex", filter_str,
                    "-map", "[v]", "-map", "2:a",
-                   "-c:v", "libx264", "-preset", "ultrafast", "-crf", "26",
-                   "-c:a", "aac", "-b:a", "128k", "-shortest", output_mp4_path]
+                   *vcodec_args(),
+                   "-c:a", "aac", "-b:a", "128k", "-shortest", _out_abs]
         nosub_cmd = ["ffmpeg", "-y",
-                     "-stream_loop", "-1", "-i", gameplay_video_path,
-                     "-i", tmp_sprite,
-                     "-i", audio_path,
+                     "-stream_loop", "-1", "-i", _gp_abs,
+                     "-i", _sp_rel,
+                     "-i", _au_abs,
                      "-filter_complex",
                      f"[0:v][1:v]overlay={x_pos}:{y_pos}[v]",
                      "-map", "[v]", "-map", "2:a",
-                     "-c:v", "libx264", "-preset", "ultrafast", "-crf", "26",
-                     "-c:a", "aac", "-b:a", "128k", "-shortest", output_mp4_path]
+                     *vcodec_args(),
+                     "-c:a", "aac", "-b:a", "128k", "-shortest", _out_abs]
 
-        def _run(cmd):
+        def _run(cmd, cwd=None):
             loop = _asyncio.get_event_loop()
-            return loop.run_in_executor(None, lambda: subprocess.run(cmd, capture_output=True, text=True))
+            return loop.run_in_executor(None, lambda: subprocess.run(cmd, capture_output=True, text=True, cwd=cwd))
 
-        proc = await _run(sub_cmd)
-        if proc.returncode != 0 or not os.path.exists(output_mp4_path) or os.path.getsize(output_mp4_path) < 1024:
+        proc = await _run(sub_cmd, cwd=_tempfile.gettempdir())
+        if proc.returncode != 0 or not os.path.exists(_out_abs) or os.path.getsize(_out_abs) < 1024:
             logger.warning(f"Sprite-reel subtitle-burn failed (code {proc.returncode}); retry without subtitles.")
-            proc = await _run(nosub_cmd)
+            with open(os.path.join(_tempfile.gettempdir(), "_burn_err.txt"), "w") as _ef:
+                _ef.write(f"rc={proc.returncode}\nCMD:\n{cmd_str}\n\nSTDERR:\n{proc.stderr}\n")
+            proc = await _run(nosub_cmd, cwd=_tempfile.gettempdir())
             if proc.returncode != 0:
                 logger.error(f"Sprite-reel render failed: {proc.stderr}")
                 raise RuntimeError(f"Sprite-reel render failed: {proc.stderr}")
+        try:
+            os.remove(ass_path)
+        except OSError:
+            pass
         try:
             os.remove(tmp_sprite)
         except OSError:
@@ -481,7 +545,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                "-i", audio_path,
                "-filter_complex", filter_str,
                "-map", "[v]", "-map", "3:a",
-               "-c:v", "libx264", "-preset", "ultrafast", "-crf", "26",
+               *vcodec_args(),
                "-c:a", "aac", "-b:a", "128k", "-shortest", output_mp4_path]
 
         def _run(c):
@@ -550,8 +614,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         sub_cmd.extend([
             "-filter_complex", filter_str,
             "-map", "[v]", "-map", "2:a",
-            "-c:v", "libx264", "-preset", "ultrafast",
-            "-crf", "26",
+            *vcodec_args(),
             "-c:a", "aac", "-b:a", "128k",
             "-shortest",
             output_mp4_path
@@ -571,8 +634,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             "[show][gameplay]vstack=inputs=2[stacked];"
             "[stacked]null[v]",
             "-map", "[stacked]", "-map", "2:a",
-            "-c:v", "libx264", "-preset", "ultrafast",
-            "-crf", "26",
+            *vcodec_args(),
             "-c:a", "aac", "-b:a", "128k",
             "-shortest",
             output_mp4_path

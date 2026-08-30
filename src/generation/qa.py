@@ -94,6 +94,17 @@ Make sure you return raw JSON without any markdown formatting or preambles."""
             logger.info(f"Overall Score: {overall_score}/10 | Custom Threshold: {threshold} | Pass: {is_passed}")
             
             if is_passed:
+                # GUARD: never stage a post that has no usable media file.
+                # (Posts must be generated before QA; if media is missing the
+                # generation step failed and the post must be marked failed,
+                # not staged for publishing with no video.)
+                import os as _os
+                if not (post.media_path and _os.path.exists(post.media_path)):
+                    post.state = "failed"
+                    post.error_message = f"QA passed but no media file (path={post.media_path!r})"
+                    db.commit()
+                    logger.error(f"Post {post.id} QA passed but has no media; marked FAILED (not staged).")
+                    return False
                 post.state = "staged"  # Staged for publishing!
                 post.error_message = None
                 db.commit()

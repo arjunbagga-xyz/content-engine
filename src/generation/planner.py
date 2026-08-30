@@ -74,12 +74,44 @@ Make sure it matches the character personality:
 Return ONLY raw JSON list containing exactly {posts_per_day} objects. Do not include markdown code block formatting."""
 
         logger.info(f"Generating content plan for {profile['name']} (posts={posts_per_day})...")
-        res = await router.generate(prompt, system_prompt=PLANNER_SYSTEM_PROMPT, task=TaskType.PLANNING, temperature=temp)
-        
-        # Clean response
-        clean_res = res.replace("```json", "").replace("```", "").strip()
-        plans = json.loads(clean_res)
-        
+
+        def _extract_json(text: str):
+            """Pull a JSON list out of an LLM response that may include prose/markdown."""
+            if not text:
+                return None
+            t = text.strip()
+            if t.startswith("```"):
+                t = t.strip("`")
+                if t.lower().startswith("json"):
+                    t = t[4:]
+            start = t.find("[")
+            end = t.rfind("]")
+            if start == -1 or end <= start:
+                return None
+            return t[start:end + 1]
+
+        plans = None
+        last_err = None
+        for attempt in range(3):
+            try:
+                res = await router.generate(prompt, system_prompt=PLANNER_SYSTEM_PROMPT,
+                                            task=TaskType.PLANNING, temperature=temp)
+                candidate = _extract_json(res)
+                if candidate:
+                    plans = json.loads(candidate)
+                    break
+                last_err = "no JSON array found in planner response"
+            except Exception as e:
+                last_err = e
+                logger.warning(f"Planner JSON parse attempt {attempt+1} failed: {e}")
+                continue
+
+        if not plans:
+            logger.error(f"Planner failed after retries ({last_err}); using safe default plan.")
+            plans = [{"platform": "instagram", "post_type": "reel", "topic": "a surprising global event",
+                      "image_prompt": "", "visual_keywords": "", "focus_hook": ""}
+                     for _ in range(posts_per_day)]
+
         logger.info(f"Successfully generated {len(plans)} content plans for {profile['name']}.")
 
         # Coerce post_type for faceless/debate accounts: the debate IS a reel.
@@ -92,18 +124,17 @@ Return ONLY raw JSON list containing exactly {posts_per_day} objects. Do not inc
         except Exception:
             is_faceless = False
         if is_faceless:
+            # Faceless debate accounts publish INSTAGRAM REELS only. The planner LLM may
+            # emit any platform/post_type (static/tweet/debate/x/...); force every plan to
+            # a single instagram reel so nothing tweets and nothing gets stuck.
             for plan in plans:
-                if plan.get("platform", "").lower() == "instagram":
-                    # Faceless debate accounts publish REELS only (the debate IS a reel).
-                    # Coerce any instagram post_type (static/photo/tweet/debate/...) to 'reel'.
-                    pt = str(plan.get("post_type", "")).lower()
-                    if pt != "reel":
-                        plan["post_type"] = "reel"
-                        logger.info(f"Coerced faceless instagram post_type '{pt}' -> 'reel' for {character_id}")
-                # Drop non-instagram platforms (e.g. x) for faceless debate accounts
-                elif plan.get("platform", "").lower() not in ("instagram",):
+                if plan.get("platform", "").lower() != "instagram":
                     plan["platform"] = "instagram"
                     logger.info(f"Forced faceless account platform -> 'instagram' for {character_id}")
+                if str(plan.get("post_type", "")).lower() != "reel":
+                    pt = plan.get("post_type", "")
+                    plan["post_type"] = "reel"
+                    logger.info(f"Coerced faceless post_type '{pt}' -> 'reel' for {character_id}")
 
         # Insert plans into SQLite queue
         queued_posts = []
@@ -180,7 +211,64 @@ Return ONLY the raw post content/copy. No meta text, no introductions, no format
             post.caption = written_content.strip()
         else:
             post.caption = written_content.strip()
-            
+
         post.state = "scripted"
+        db.commit()
+
+    @staticmethod
+    async def generate_caption(script: str, topic: str, characters: Dict[str, str],
+                               max_chars: int = 2000, max_hashtags: int = 5) -> str:
+        """Generate an Instagram reel caption from the reel's transcript.
+
+        Structure: HOOK (captivating, derived from topic or a standout moment) ->
+        CONTENT (longer, names characters naturally in context) -> HASHTAGS
+        (<=max_hashtags, freely chosen from the script; never generic #AI/#debate/#fyp).
+
+        Enforces hard limits: total length <= max_chars, hashtags <= max_hashtags.
+        """
+        char_list = ", ".join(characters.keys())
+        prompt = f"""You are writing an Instagram Reel caption for a faceless debate/reaction account.
+
+TOPIC: {topic}
+CHARACTERS IN THE REEL: {char_list}
+SCRIPT (what the characters actually said in the reel):
+\"\"\"
+{script}
+\"\"\"
+
+Write a caption with exactly this structure:
+1. HOOK: one captivating opening line that pulls the audience in. Source it from the topic or a standout, absurd, or provocative moment picked from the script. No "In this video..." filler.
+2. CONTENT: 2-4 sentences of context that name the characters NATURALLY (e.g. "Tate's convinced..., Peppa fires back..."), in the context of what the debate was actually about. Do not use hashtag-style name mentions.
+3. HASHTAGS: on the final line, generate hashtags for the {script} — freely decide them, but ONLY include character names and topic-derived tags. NEVER use generic buzzwords like #AI, #debate, #fyp, #viral, #content. Use at most {max_hashtags} hashtags.
+
+Hard rules:
+- Total caption must be under {max_chars} characters.
+- Maximum {max_hashtags} hashtags. If you think of more, keep only the {max_hashtags} best.
+- Return ONLY the caption text. No meta, no quotes around it."""
+
+        caption = await router.generate(
+            prompt,
+            system_prompt="You write sharp, funny, native Instagram captions. No corporate tone, no buzzword spam.",
+            task=TaskType.CREATIVE_WRITING,
+            temperature=0.8,
+        )
+        caption = (caption or "").strip()
+
+        # Enforce max hashtags: count trailing #tags, trim if over limit.
+        import re
+        tags = re.findall(r"#\w+", caption)
+        if len(tags) > max_hashtags:
+            # Remove all tags, re-add only the first max_hashtags found in order.
+            kept = tags[:max_hashtags]
+            # Strip existing tags then append kept ones on the end.
+            caption_no_tags = re.sub(r"#\w+", "", caption)
+            caption_no_tags = re.sub(r"\s+", " ", caption_no_tags).strip()
+            caption = caption_no_tags + "\n\n" + " ".join(kept)
+
+        # Enforce char limit (worst case hard truncate, but LLM is instructed).
+        if len(caption) > max_chars:
+            caption = caption[:max_chars].rsplit(" ", 1)[0].strip()
+
+        return caption
         db.commit()
         logger.info(f"Successfully scripted post {post.id}!")

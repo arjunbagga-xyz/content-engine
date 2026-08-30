@@ -78,3 +78,4 @@ rvc_repo/
 *.exe
 *.zip
 .DS_Store
+.hermes/

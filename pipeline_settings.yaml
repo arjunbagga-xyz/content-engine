@@ -1,0 +1,29 @@
+# Content Engine — pipeline feature flags, cadence, and job on/off switches.
+# This file is the SINGLE source of truth for what runs and how often.
+# Edit flags here (not code) to enable/disable behaviours.
+
+features:
+  # Trend scouting: get_niche_trends() is currently a dead/LLM-invented step.
+  # OFF = bypass it (topics come from characters.yaml topic_universe + FacelessMemory).
+  # Flip to true LATER when a real trend source (Reddit/Google Trends/etc.) is wired in.
+  trend_scouting: false
+
+  # Narrative arcs (story evolution + ArcSummary) apply to INFLUENCER accounts only.
+  # Faceless sprite-debate accounts (type: faceless) NEVER run arcs — gated by Character.type.
+  # This flag is the global default; per-account type still enforces the rule.
+  narrative_arcs: false
+
+jobs:
+  # Each job exits 0 (no-op) immediately if enabled: false.
+  plan:     { enabled: true }     # faceless: capacity enqueuer only (no LLM content plan)
+  generate: { enabled: true }     # the RVC furnace — runs in its own process, exits when done
+  publish:  { enabled: true }     # tunnel up -> publish due -> tunnel down
+  cleanup:  { enabled: true }     # 10-day retention sweep of outputs/
+
+cadence:
+  # Intervals for the OS scheduler / light ticker. Heavy work is one-shot either way.
+  generate_every_min: 240
+  publish_every_min: 30
+  cleanup_at: "03:00"
+  # plan runs once per day; the light scheduler triggers it at this time.
+  plan_at: "09:00"

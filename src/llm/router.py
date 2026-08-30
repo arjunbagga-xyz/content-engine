@@ -131,9 +131,14 @@ class LLMRouter:
             raise RuntimeError(f"Invalid response structure from Gemini API: {data}")
 
     async def _call_nous(self, prompt: str, system_prompt: Optional[str] = None, temperature: float = 0.7) -> str:
-        """Call Nous Research Inference API (OpenAI-compatible). Primary text provider,
-        cycles through always-free models (hy3 / laguna-s / laguna-xs / step-3.7-flash)
-        so no single model gets rate-limited. Uses tencent/hy3:free as the starting point."""
+        """Call Nous Research Inference API (OpenAI-compatible). Primary text provider.
+
+        Retries WITHIN this single call: if a model errors or returns empty content,
+        it advances to the next free model (round-robin) instead of bailing to another
+        provider. Rate-limit responses (429/503) are retried on the SAME model after a
+        short backoff; hard errors (404/auth) move straight to the next model.
+        Validates non-empty content before returning.
+        """
         if not self.nous_client:
             raise RuntimeError("Nous client not configured")
         loop = asyncio.get_event_loop()
@@ -141,18 +146,40 @@ class LLMRouter:
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": prompt})
-        # Round-robin to the next free model each call.
-        model = self.nous_models[self.nous_idx % len(self.nous_models)]
-        self.nous_idx += 1
-        response = await loop.run_in_executor(
-            None,
-            lambda: self.nous_client.chat.completions.create(
-                model=model,
-                messages=messages,
-                temperature=temperature
-            )
-        )
-        return response.choices[0].message.content
+
+        last_err = None
+        n = len(self.nous_models)
+        # Try each model once (round-robin starting at current idx).
+        for _ in range(n):
+            model = self.nous_models[self.nous_idx % n]
+            self.nous_idx += 1
+            try:
+                response = await loop.run_in_executor(
+                    None,
+                    lambda: self.nous_client.chat.completions.create(
+                        model=model,
+                        messages=messages,
+                        temperature=temperature
+                    )
+                )
+                content = response.choices[0].message.content if (response.choices and response.choices[0].message) else None
+                if not content or not content.strip():
+                    # Empty/None content: treat as a recoverable failure, try next model.
+                    last_err = RuntimeError(f"nous model {model} returned empty content")
+                    continue
+                return content
+            except Exception as e:
+                msg = str(e).lower()
+                if "429" in msg or "503" in msg or "rate" in msg or "timeout" in msg:
+                    # Rate-limit / overload: brief backoff, then let the next iteration
+                    # (same or next model) retry. We sleep and continue to next model.
+                    await asyncio.sleep(3)
+                    last_err = e
+                    continue
+                # Hard error (404 / auth / bad request): try next model without sleeping.
+                last_err = e
+                continue
+        raise RuntimeError(f"nous: all free models failed. Last error: {last_err}")
 
     async def generate_vision(self, prompt: str, image_path: str, mime_type: str = "image/png") -> str:
         """Call Google Gemini REST API directly with an image file using requests.
@@ -224,78 +251,102 @@ class LLMRouter:
                 
         raise RuntimeError(f"All Gemini Vision models failed. Last error: {str(last_error)}")
 
+    def _is_rate_limit(self, err: Exception) -> bool:
+        """A 429/503/timeout/overload is transient — retry the SAME provider after backoff.
+        A 404 (model gone) or auth error is permanent — drop the provider."""
+        msg = str(err).lower()
+        if "429" in msg or "503" in msg or "rate" in msg or "timeout" in msg or "overload" in msg or "too many" in msg:
+            return True
+        return False
+
+    def _is_hard_fail(self, err: Exception) -> bool:
+        """404 / model not found / auth / invalid key -> never recover this process."""
+        msg = str(err).lower()
+        if "404" in msg or "not found" in msg or "does not exist" in msg or "unauthorized" in msg or "authentication" in msg or "invalid api key" in msg or "api key" in msg:
+            return True
+        return False
+
     async def generate(self, prompt: str, system_prompt: Optional[str] = None, task: TaskType = TaskType.SIMPLE, temperature: float = 0.7) -> str:
-        """Asynchronously call the best available LLM with automatic fallback."""
+        """Call the best available LLM with smart fallback.
+
+        - Nous is primary and self-retries across its free models (see _call_nous).
+        - Rate-limit errors (429/503) -> short backoff, retry the SAME provider.
+        - Hard errors (404 model-gone / auth) -> permanently drop that provider for
+          this process and move on (no point retrying a dead model).
+        - No blind multi-cycle cooldown that silently skips a healthy provider.
+        """
         preferred_providers = self._get_provider_for_task(task)
-        
-        # Filter active providers
-        active_providers = [p for p in preferred_providers if self.providers.get(p) is True]
-        
+        active_providers = [p for p in preferred_providers if self.providers.get(p) is True
+                            and not self._is_hard_fail_cached(p)]
         if not active_providers:
-            raise RuntimeError("No LLM providers are configured in the env file.")
+            raise RuntimeError("No LLM providers are configured / all hard-failed in env file.")
 
         last_error = None
-        for provider in active_providers:
-            if self.cool_downs[provider] > 0:
-                self.cool_downs[provider] -= 1
-                continue
-                
-            try:
-                logger.info(f"Routing task {task.value} to provider: {provider}")
-                if provider == "gemini":
-                    return await self._call_gemini_rest(prompt, system_prompt, temperature)
-
-                elif provider == "nous":
-                    return await self._call_nous(prompt, system_prompt, temperature)
-
-                elif provider == "groq":
-                    # Groq OpenAI-compatible call
-                    loop = asyncio.get_event_loop()
-                    
-                    messages = []
-                    if system_prompt:
-                        messages.append({"role": "system", "content": system_prompt})
-                    messages.append({"role": "user", "content": prompt})
-                    
-                    # Using the standard versatile model (70B) which replaced decommissioned specdec
-                    response = await loop.run_in_executor(
-                        None,
-                        lambda: self.groq_client.chat.completions.create(
-                            model="llama-3.3-70b-versatile",
-                            messages=messages,
-                            temperature=temperature
+        for attempt in range(3):  # up to 3 passes (allows rate-limit backoff + retry)
+            progressed = False
+            for provider in active_providers:
+                if self.cool_downs.get(provider, 0) > 0:
+                    self.cool_downs[provider] -= 1
+                    continue
+                try:
+                    logger.info(f"Routing task {task.value} to provider: {provider} (attempt {attempt+1})")
+                    if provider == "gemini":
+                        return await self._call_gemini_rest(prompt, system_prompt, temperature)
+                    elif provider == "nous":
+                        return await self._call_nous(prompt, system_prompt, temperature)
+                    elif provider == "groq":
+                        loop = asyncio.get_event_loop()
+                        messages = []
+                        if system_prompt:
+                            messages.append({"role": "system", "content": system_prompt})
+                        messages.append({"role": "user", "content": prompt})
+                        response = await loop.run_in_executor(
+                            None,
+                            lambda: self.groq_client.chat.completions.create(
+                                model="llama-3.3-70b-versatile",
+                                messages=messages,
+                                temperature=temperature
+                            )
                         )
-                    )
-                    return response.choices[0].message.content
-                    
-                elif provider == "openrouter":
-                    # OpenRouter OpenAI-compatible call
-                    loop = asyncio.get_event_loop()
-                    
-                    messages = []
-                    if system_prompt:
-                        messages.append({"role": "system", "content": system_prompt})
-                    messages.append({"role": "user", "content": prompt})
-                    
-                    # Using Llama 3.1 8B Instruct free model which is highly active and stable
-                    response = await loop.run_in_executor(
-                        None,
-                        lambda: self.openrouter_client.chat.completions.create(
-                            model="meta-llama/llama-3.1-8b-instruct:free",
-                            messages=messages,
-                            temperature=temperature
+                        return response.choices[0].message.content
+                    elif provider == "openrouter":
+                        loop = asyncio.get_event_loop()
+                        messages = []
+                        if system_prompt:
+                            messages.append({"role": "system", "content": system_prompt})
+                        messages.append({"role": "user", "content": prompt})
+                        response = await loop.run_in_executor(
+                            None,
+                            lambda: self.openrouter_client.chat.completions.create(
+                                model="meta-llama/llama-3.1-8b-instruct:free",
+                                messages=messages,
+                                temperature=temperature
+                            )
                         )
-                    )
-                    return response.choices[0].message.content
-
-            except Exception as e:
-                logger.warning(f"Provider {provider} failed with error: {str(e)}. Attempting fallback...")
-                last_error = e
-                # Set cool-down for this provider
-                self.cool_downs[provider] = 3
-                continue
-                
+                        return response.choices[0].message.content
+                except Exception as e:
+                    logger.warning(f"Provider {provider} failed: {str(e)[:160]}")
+                    last_error = e
+                    if self._is_hard_fail(e):
+                        # Permanently drop this provider for this process.
+                        self._hard_failed.add(provider)
+                        logger.warning(f"Provider {provider} hard-failed; dropping for this session.")
+                        active_providers = [x for x in active_providers if x != provider]
+                    else:
+                        # Rate limit / transient: short backoff, retry same provider next pass.
+                        self.cool_downs[provider] = 1
+                        await asyncio.sleep(4)
+                    progressed = True
+            if not active_providers:
+                break
+            if not progressed:
+                break
         raise RuntimeError(f"All LLM providers failed. Last error: {str(last_error)}")
+
+    _hard_failed = set()  # class-level dropped providers for this process
+
+    def _is_hard_fail_cached(self, provider: str) -> bool:
+        return provider in self._hard_failed
 
 # Singleton instance
 router = LLMRouter()

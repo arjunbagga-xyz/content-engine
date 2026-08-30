@@ -3,7 +3,7 @@ import datetime
 import random
 import time
 from sqlalchemy.orm import Session
-from src.memory.db import ContentPost
+from src.memory.db import ContentPost, Character
 from src.publishing.publisher import PublisherRouter
 from src.core.config import config
 
@@ -36,6 +36,12 @@ class ContentQueueManager:
         and handles retry schedules for failures.
         """
         now = datetime.datetime.utcnow()
+        # Only publish posts for accounts that are still active. Posts left
+        # queued for deactivated accounts (e.g. dev/artifact accounts) would
+        # otherwise retry forever and waste CPU — skip them here.
+        active_ids = {
+            c.id for c in self.db.query(Character).filter(Character.status == "active").all()
+        }
         # Find posts that are staged and scheduled in the past/present
         due_posts = (
             self.db.query(ContentPost)
@@ -44,6 +50,9 @@ class ContentQueueManager:
             .order_by(ContentPost.scheduled_time.asc())
             .all()
         )
+        due_posts = [p for p in due_posts if p.character_id in active_ids]
+        if active_ids:
+            logger.info(f"Active accounts for publishing: {sorted(active_ids)}")
 
         if not due_posts:
             logger.info("No content due for publishing at this time.")

@@ -282,15 +282,38 @@ class PublisherRouter:
         
         try:
             if platform == "instagram":
-                if post_type == "reel":
+                # A "debate" post IS a video reel (our pipeline's name for the
+                # tate_vs_peppa sprite-debate video). Instagram/Meta only knows
+                # "REELS", so treat debate identically to reel for publishing.
+                if post_type in ("reel", "debate"):
                     # Official Meta Content Publishing API (token-based, no login).
                     # Handles re-encode -> cloudflared host -> container -> poll -> publish.
                     if not post.media_path or not os.path.exists(post.media_path):
                         raise FileNotFoundError(f"Media file not found for reel: {post.media_path}")
                     from src.publishing.official_publisher import OfficialIGPublisher
-                    publisher = OfficialIGPublisher(post.character_id)
-                    post_id = publisher.post_reel(post.media_path, post.caption or "")
-                    post.media_type = "video"
+                    from src.publishing import tunnel as tunnel_mgr
+                    last_err = None
+                    # Retry with a fresh tunnel each attempt. The cloudflared
+                    # quick-tunnel local proxy is intermittently flaky for large
+                    # video files (Meta fetches the video through the tunnel); a
+                    # fresh tunnel + re-check usually succeeds within a few tries.
+                    for attempt in range(1, 4):
+                        try:
+                            tunnel_mgr.ensure_tunnel()
+                            publisher = OfficialIGPublisher(post.character_id)
+                            post_id = publisher.post_reel(post.media_path, post.caption or "")
+                            post.media_type = "video"
+                            break
+                        except Exception as e:
+                            last_err = e
+                            logger.warning("Reel publish attempt %d failed: %s", attempt, e)
+                            # Back off so subsequent attempts land in a different
+                            # ngrok/Meta window — the free tunnel is intermittently
+                            # flaky (502/530) but DOES deliver on a good window
+                            # (post 86 published this way). 8s was too short.
+                            time.sleep(90)
+                    else:
+                        raise last_err or RuntimeError("Reel publish failed after retries")
                 else:
                     publisher = InstagramPublisher(char_id, dry_run=dry_run)
                     if post_type in ("static", "photo", "quote_card"):
@@ -342,11 +365,13 @@ class PublisherRouter:
             # Capture error details
             db.rollback()
             post.retry_count += 1
-            if post.retry_count >= 3:
+            if post.retry_count >= 6:
                 post.state = "failed"
             else:
-                post.state = "scripted" # Return to scripted state so queue manager retries
-                
+                # Publish failed (tunnel/Meta flake) — keep the rendered media
+                # and return to STAGED so the publish job retries the SAME file,
+                # NOT scripted (which would wastefully re-render).
+                post.state = "staged"
             post.error_message = str(e)
             db.commit()
             logger.error(f"Publishing failed for post {post.id}: {str(e)}")

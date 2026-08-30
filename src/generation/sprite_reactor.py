@@ -1,11 +1,13 @@
 import os
 import logging
 import random
+import asyncio
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Tuple
 
 from src.core.config import config
 from src.core.config import BASE_DIR
+from src.core.config import OUTPUTS_DIR
 from src.llm.router import router, TaskType
 from src.generation import tts as TTS
 from src.generation import video as VID
@@ -107,8 +109,10 @@ class SpriteReactor:
             f"Write the hook now:"
         )
         try:
-            text = await router.generate(prompt, system_prompt=SpriteReactor.SYSTEM_PROMPT,
-                                         task=TaskType.SIMPLE, temperature=0.9)
+            text = await asyncio.wait_for(
+                router.generate(prompt, system_prompt=SpriteReactor.SYSTEM_PROMPT,
+                               task=TaskType.SIMPLE, temperature=0.9),
+                timeout=120)
             return text.strip().lstrip("\"'").strip()
         except Exception as e:
             logger.error(f"Sprite hook generation failed: {e}")
@@ -204,8 +208,10 @@ class SpriteReactor:
                 f"Write it now:"
             )
             try:
-                txt = await router.generate(prompt, system_prompt=SpriteReactor.SYSTEM_PROMPT,
-                                            task=TaskType.SIMPLE, temperature=0.9)
+                txt = await asyncio.wait_for(
+                    router.generate(prompt, system_prompt=SpriteReactor.SYSTEM_PROMPT,
+                                    task=TaskType.SIMPLE, temperature=0.9),
+                    timeout=120)
                 txt = txt.strip().lstrip("\"'").strip()
             except Exception as e:
                 logger.error(f"Debate script failed for {char_key}: {e}")
@@ -398,7 +404,8 @@ class SpriteReactor:
     @staticmethod
     async def produce_account_debate(account_id: str, output_path: str, topic: str = None,
                                      sprite_scale: float = 0.35,
-                                     num_turns: int = None) -> Dict[str, Any]:
+                                     num_turns: int = None,
+                                     tone_plan: dict = None) -> Dict[str, Any]:
         """GENERIC faceless debate reel driven entirely by the account's YAML config.
 
         Reads from characters.yaml: speakers (leads), cameos, cameo_prob, tone,
@@ -472,17 +479,23 @@ class SpriteReactor:
                 "recent_topics": recent_str, "trading_note": trading_note,
             }
             if is_cameo:
-                prompt = (f"TOPIC: {topic}\nCAMEO GUEST: {sp} — {persona}\nWHAT'S BEEN SAID:\n{ctx}\n"
-                          f"You are a CAMEO guest dropping a short, funny, out-of-context one-liner as {sp} "
-                          f"in their exact voice (snack complaint, random observation, petty interruption). "
-                          f"Output ONLY the line, no quotes.")
+                # NOTE: never use the words "cameo", "guest", "roundtable", "panel", or
+                # reference the show/format in the prompt — the LLM parrots those into the
+                # script (e.g. "ROUNDTABLE IS WHERE...", "sit in a circle"). Frame it as a
+                # natural interruption by another character mid-debate, in their own voice.
+                prompt = (f"TOPIC: {topic}\nINTERRUPTER: {sp} — {persona}\nWHAT'S BEEN SAID SO FAR:\n{ctx}\n"
+                          f"Write one short, funny line where {sp} jumps in and reacts to the debate in their "
+                          f"exact voice (a snack complaint, a random observation, a petty interruption). "
+                          f"Stay in character. Output ONLY the line, no quotes.")
             else:
                 prompt = builder.build(context)
             text = None
             for attempt in range(3):
                 try:
-                    text = (await router.generate(prompt, system_prompt=SYSTEM,
-                                                  task=TaskType.SIMPLE, temperature=0.95)).strip()
+                    text = (await asyncio.wait_for(
+                        router.generate(prompt, system_prompt=SYSTEM,
+                                       task=TaskType.SIMPLE, temperature=0.95),
+                        timeout=120)).strip()
                     if text:
                         break
                 except Exception as ge:
@@ -490,7 +503,19 @@ class SpriteReactor:
             text = (text or "").strip().lstrip("\"'").strip()
             if not text:
                 text = f"{sp} has no comment."
-            emotion = random.choice(["neutral", "excited", "angry", "sarcastic", "smug", "determined"])
+            # PER-TURN TONE: use the planner's resolved tone_plan for this character at
+            # this turn index (tone shifts across the debate, per character, independently).
+            # Fallback: a deterministic escalation sequence so tone still varies when no
+            # plan is supplied (never the old flat single-random pick).
+            _DEFAULT_ESCALATION = ["neutral", "confident", "provocative", "agitated",
+                                    "mocking", "smug", "reflective", "determined"]
+            planned = (tone_plan or {}).get(sp) if isinstance(tone_plan, dict) else None
+            if isinstance(planned, list) and planned:
+                emotion = planned[t % len(planned)]
+            elif isinstance(planned, str) and planned:
+                emotion = planned
+            else:
+                emotion = _DEFAULT_ESCALATION[t % len(_DEFAULT_ESCALATION)]
             turns.append({"speaker": sp, "text": text, "emotion": emotion, "cameo": is_cameo})
             ctx_lines.append(f"{sp}: {text}")
 
@@ -526,7 +551,12 @@ class SpriteReactor:
                 await VID.VideoGenerator.compose_sprite_reel(sprite_path, gameplay, a_path, seg_words, v_seg,
                                                             sprite_scale=sprite_scale, grade=grade)
             except Exception as e:
-                logger.error(f"[tvp] turn {i} composite failed: {e}"); continue
+                logger.error(f"[tvp] turn {i} composite failed: {e}")
+                # Clean this segment's temp artifacts so they don't accumulate in outputs/.
+                for _t in (a_path, v_seg):
+                    try: os.remove(_t)
+                    except OSError: pass
+                continue
             if os.path.exists(v_seg):
                 seg_audio.append(a_path); seg_videos.append(v_seg)
                 seg_meta.append({"speaker": sp, "text": text, "emotion": emotion,
@@ -564,10 +594,26 @@ class SpriteReactor:
                     capture_output=True, text=True)
         if r.returncode != 0 or not os.path.exists(output_path):
             logger.error(f"[tvp] concat failed: {r.stderr[-400:]}")
+            # Clean all per-render temp artifacts so they do not accumulate in outputs/.
+            for _t in seg_audio + [silence, combined] + seg_videos:
+                try: os.remove(_t)
+                except OSError: pass
             raise RuntimeError(f"tvp concat failed (rc={r.returncode})")
-        for t in seg_audio + [silence, combined] + seg_videos:
-            try: os.remove(t)
+        # Final cleanup of all per-render temp artifacts (success path).
+        for _t in seg_audio + [silence, combined] + seg_videos:
+            try: os.remove(_t)
             except OSError: pass
+        # Safety net: clear any leftover _<base>_ temp files (e.g. on partial failure).
+        # NOTE: pathlib.Path.glob() raises NotImplementedError on Windows when given an
+        # absolute pattern, so we iterate OUTPUTS_DIR (where segments live) and filter by
+        # name. base is the output path without suffix; segment files are named "{base}_segN.*".
+        _base_name = Path(base).name
+        for _leftover in OUTPUTS_DIR.iterdir():
+            try:
+                if _leftover.name.startswith(_base_name + "_"):
+                    _leftover.unlink()
+            except OSError:
+                pass
         return {"account_id": account_id, "topic": topic, "turns": seg_meta, "path": output_path,
                 "duration_note": f"{len(seg_meta)} turns rendered"}
 
@@ -643,6 +689,10 @@ class SpriteReactor:
         # Tone + heckle ratio from YAML (sensible fallbacks).
         tone = tone or char_conf.get("tone", "funny chaotic panel debate")
         heckle_ratio = heckle_ratio if heckle_ratio is not None else float(char_conf.get("heckle_ratio", 0.0))
+        # Turn count: default from account seg_range (like debate) or 18.
+        if num_turns is None:
+            lo, hi = (char_conf.get("seg_range", [8, 16]) + [18])[:2]
+            num_turns = random.randint(int(lo), int(hi))
         # Prompt templates from YAML (per-pipeline list); fallback to built-ins.
         pt = char_conf.get("prompt_templates", {}) or {}
         rt_templates = pt.get("roundtable") or [_RT_NORMAL_DEFAULT]
@@ -672,8 +722,10 @@ class SpriteReactor:
                 text = None
                 for attempt in range(3):
                     try:
-                        text = (await router.generate(prompt, system_prompt=SpriteReactor.SYSTEM_PROMPT,
-                                                      task=TaskType.SIMPLE, temperature=0.95)).strip()
+                        text = (await asyncio.wait_for(
+                            router.generate(prompt, system_prompt=SpriteReactor.SYSTEM_PROMPT,
+                                           task=TaskType.SIMPLE, temperature=0.95),
+                            timeout=120)).strip()
                         if text:
                             break
                     except Exception as ge:

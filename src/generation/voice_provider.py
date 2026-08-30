@@ -34,6 +34,10 @@ RVC_REVERSE = False
 RVC_FILTER_RADIUS = 3
 RVC_RMS_MIX_RATE = 1.0
 RVC_PROTECT = 0.4           # protects unvoiced consonants from buzz
+RVC_RETRIES = 6             # this fork is flaky (cli intermittently returns rc=0 w/ no output);
+                             # 6 attempts cycle gpu+index -> cpu+index -> cpu+noindex so each
+                             # mode gets 2 tries before giving up
+RVC_F0_STD_FLOOR = 12.0     # Hz: F0 std below this => output too flat/generic => retry
 
 # Map of character -> base Edge-TTS narrator used to author the line before RVC conversion.
 # (Same values as characters.yaml tts_voice; kept here so VoiceProvider is self-contained.)
@@ -60,6 +64,70 @@ def _model_paths(character: str):
 def rvc_model_ready(character: str) -> bool:
     pth, _ = _model_paths(character)
     return pth.exists()
+
+
+def _rvc_f0_stats(wav_path: str):
+    """Return (f0_min, f0_max, f0_mean, f0_std) Hz for an RVC output wav.
+
+    Dependency-free: reads the wav with the stdlib `wave` module + numpy autocorrelation
+    (librosa/soundfile aren't reliably importable in rvc_env, so avoid them here).
+    Used by the quality gate to detect flat/generic RVC outputs (low F0 std => the model
+    didn't reshape the voice => retry for a better stochastic draw). Never raises into the
+    caller on failure — returns zeros so the caller simply skips retrying that attempt.
+    """
+    try:
+        import wave
+        import numpy as np
+        with wave.open(wav_path, "rb") as wf:
+            nchannels = wf.getnchannels()
+            sampwidth = wf.getsampwidth()
+            nframes = wf.getnframes()
+            sr = wf.getframerate()
+            raw = wf.readframes(nframes)
+        # decode PCM to float mono
+        if sampwidth == 2:
+            dtype = np.int16
+        elif sampwidth == 4:
+            dtype = np.int32
+        else:
+            dtype = np.uint8
+        arr = np.frombuffer(raw, dtype=dtype).astype(np.float64)
+        if nchannels > 1:
+            arr = arr.reshape(-1, nchannels).mean(axis=1)
+        if sampwidth == 2:
+            arr /= 32768.0
+        elif sampwidth == 4:
+            arr /= 2147483648.0
+        # autocorrelation F0 over short frames
+        frame = int(0.025 * sr)
+        hop = int(0.010 * sr)
+        f0s = []
+        fmin, fmax = 80.0, 670.0
+        fmin_lag = int(sr / fmax)
+        fmax_lag = int(sr / fmin)
+        for off in range(0, max(1, len(arr) - frame), hop):
+            seg = arr[off:off + frame]
+            seg = seg - seg.mean()
+            if seg.std() < 1e-4:
+                continue
+            ac = np.correlate(seg, seg, "full")[len(seg) - 1:]
+            ac /= ac[0]
+            # restrict lag search to [fmin_lag, fmax_lag]
+            lo = min(len(ac), fmin_lag)
+            hi = min(len(ac), fmax_lag + 1)
+            if hi <= lo:
+                continue
+            lag = lo + int(np.argmax(ac[lo:hi]))
+            if ac[lag] > 0.3:  # voiced
+                f0s.append(sr / lag)
+        f0 = np.array(f0s)
+        if f0.size < 2:
+            return 0.0, 0.0, 0.0, 0.0
+        return float(f0.min()), float(f0.max()), float(f0.mean()), float(f0.std())
+    except Exception as e:
+        logger.debug(f"F0 stats failed for {wav_path}: {e}")
+        return 0.0, 0.0, 0.0, 0.0
+
 
 
 def _ffmpeg_decode(src: str, dst: str) -> bool:
@@ -183,18 +251,38 @@ def _rvc_convert(narrator_wav: str, character: str, out_path: str,
     ]
     if index:
         cmd += ["--index", str(Path(index).resolve())]
-    # Force the inference device (CPU is fine & leaves GPU free)
-    env = dict(os.environ)
-    env["RVC_DEVICE"] = RVC_DEVICE
 
-    logger.info(f"RVC convert: {character}  ({'with index' if index else 'no index'})")
-    # Critical: strip any inherited PYTHONPATH (hermes-agent numpy 2.4.3 shadows our rvc_env).
-    clean_env = {k: v for k, v in os.environ.items() if k.upper() != "PYTHONPATH"}
-    clean_env["PYTHONPATH"] = rvc_repo
-    clean_env["RVC_DEVICE"] = RVC_DEVICE
-    proc = subprocess.run(cmd, capture_output=True, text=True, cwd=rvc_repo, env=clean_env)
-    if proc.returncode != 0 or not os.path.exists(out_path) or os.path.getsize(out_path) < 1024:
-        raise RuntimeError(f"RVC infer failed: {proc.stderr[:500]}")
+    logger.info(f"RVC convert: {character} ({'with index ' + str(index) if index else 'no index'})")
+
+    # PERSISTENT CUDA WORKER. The old code spawned a fresh rvc_repo/infer/cli.py
+    # subprocess per segment; every spawn reloaded HuBERT+RMVPE+model+index AND
+    # re-allocated GPU memory, and on the 4GB 1650 that per-call CUDA alloc crashed
+    # intermittently (rc=0, no output) -> killed the reel. The sandbox proof showed
+    # a persistent worker (model loaded ONCE, reuse VC) converts 10/10 segments on
+    # the 1650 at ~27s/seg with zero flakes. The fork's config.py already tunes
+    # fp32 + x_pad/x_query/x_center/x_max for the 1650's 4GB, so CUDA:0 is stable.
+    try:
+        from src.generation import rvc_worker
+        ok, out = rvc_worker.batch_convert(
+            character, [(narrator_wav, out_path)], pitch=pitch
+        )[0]
+        if not ok or not os.path.exists(out_path) or os.path.getsize(out_path) < 1024:
+            raise RuntimeError("RVC worker returned no usable output")
+    except Exception as e:
+        # Loud failure, no silent Edge-TTS fallback (per directive: we must never
+        # publish a generic narrator voice in place of a character voice).
+        raise RuntimeError(f"RVC infer failed for {character}: {e}")
+
+    # Quality gate: RVC is nondeterministic; a "flat/generic" result has a thin F0
+    # range. With a persistent worker this is cheap to re-check; if it's flat we
+    # still return the file (a flat character voice beats a wrong narrator voice),
+    # but log it so we can see quality drift.
+    f0_min, f0_max, f0_mean, f0_std = _rvc_f0_stats(out_path)
+    logger.info(f"RVC {character}: F0 min={f0_min:.1f} max={f0_max:.1f} "
+                f"mean={f0_mean:.1f} std={f0_std:.1f}")
+    if f0_std < RVC_F0_STD_FLOOR:
+        logger.warning(f"RVC {character}: output F0 std {f0_std:.1f} below floor "
+                       f"{RVC_F0_STD_FLOOR} (flat/generic); using anyway (no fallback).")
     return out_path
 
 
@@ -215,25 +303,28 @@ async def generate_voice(text: str, character: str, output_path: str,
     prosody = EM.edge_tts_args(emotion)
     await _edge_tts(text, narrator, tmp_narrator, prosody=prosody)
 
-    # Step 2: convert to character voice if an RVC model is ready
+    # Step 2: convert to character voice. RVC is MANDATORY when a model exists for
+    # this character — we must NEVER silently fall back to the generic Edge-TTS
+    # narrator (that ships a robotic, non-character voice to Instagram). If RVC is
+    # configured but fails, we raise so the reel FAILS LOUDLY instead of publishing
+    # a wrong voice. Only accounts with NO RVC model at all may use the narrator
+    # (a deliberate "not trained yet" state, logged loudly).
     if rvc_model_ready(character):
+        _rvc_convert(tmp_narrator, character, output_path)  # raises on failure (no fallback)
         try:
-            _rvc_convert(tmp_narrator, character, output_path)
-            try:
-                os.remove(tmp_narrator)
-            except OSError:
-                pass
-            logger.info(f"Voice({character}): RVC conversion OK (emotion={emotion})")
-            return {"path": output_path, "method": "rvc", "character": character,
-                    "narrator": narrator, "emotion": emotion}
-        except Exception as e:
-            logger.warning(f"Voice({character}): RVC failed ({e}); falling back to Edge-TTS")
-            if os.path.exists(tmp_narrator):
-                os.replace(tmp_narrator, output_path)
-            return {"path": output_path, "method": "edge_tts", "character": character,
-                    "narrator": narrator, "emotion": emotion}
+            os.remove(tmp_narrator)
+        except OSError:
+            pass
+        logger.info(f"Voice({character}): RVC conversion OK (emotion={emotion})")
+        return {"path": output_path, "method": "rvc", "character": character,
+                "narrator": narrator, "emotion": emotion}
 
-    # No model yet: use narrator directly
+    # No RVC model configured for this character: narrator fallback is allowed
+    # (account not trained yet), but log it loudly so it is never silent.
+    logger.warning(
+        f"Voice({character}): NO RVC model configured — using Edge-TTS narrator "
+        f"'{narrator}' (NOT a character voice). Train/fix the RVC model before publishing."
+    )
     os.replace(tmp_narrator, output_path)
     return {"path": output_path, "method": "edge_tts", "character": character,
             "narrator": narrator, "emotion": emotion}

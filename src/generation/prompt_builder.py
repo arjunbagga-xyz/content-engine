@@ -31,9 +31,22 @@ def fill_template(template: str, context: Dict[str, Any]) -> str:
 class PromptBuilder:
     """Builds per-turn prompts for an account from its YAML prompt_templates."""
 
-    def __init__(self, account_conf: Dict[str, Any]):
+    def __init__(self, account_conf: Dict[str, Any], pipeline: str = "debate_2lead_cameo"):
         self.conf = account_conf
-        self.templates: List[str] = list(account_conf.get("prompt_templates", [])) or [self._default()]
+        pt = account_conf.get("prompt_templates")
+        # prompt_templates may be a flat list of strings OR a nested dict keyed by
+        # pipeline name (e.g. {debate_2lead_cameo: [...], roundtable: [...]}).
+        # Pick the sub-list for the active pipeline; never fall through to the dict
+        # KEYS (which would leak literal names like "roundtable" into the LLM prompt).
+        if isinstance(pt, dict):
+            tmpl_list = pt.get(pipeline, [])
+            if not tmpl_list:
+                tmpl_list = pt.get("debate_2lead_cameo", []) or pt.get(list(pt)[0], [])
+        elif pt:
+            tmpl_list = list(pt)
+        else:
+            tmpl_list = []
+        self.templates: List[str] = list(tmpl_list) or [self._default()]
 
     @staticmethod
     def _default() -> str:

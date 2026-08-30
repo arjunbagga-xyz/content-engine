@@ -22,7 +22,7 @@ from src.core.config import config
 from src.memory.db import SessionLocal, ContentPost, Character, NarrativeEvent, ArcSummary
 from src.memory.init_db import populate_characters
 from src.publishing.publisher import PublisherRouter
-from src.scheduling.scheduler import ProductionScheduler
+from src.jobs.registry import get_job as _get_job
 from src.generation.planner import ContentPlanner
 from src.generation.qa import QualityAssessor
 from src.generation.media_library import ManifestBuilder
@@ -538,11 +538,18 @@ async def get_arcs():
 
 # --- TRIGGER PIPELINE GENERATION ---
 async def run_pipeline_for_character(char_id: str):
-    logger.info(f"Background task: Triggering complete lifecycle for character {char_id}")
+    """Run generate -> publish for a character via the one-off job framework.
+
+    Replaces the old monolithic ProductionScheduler.run(). Each job runs in this
+    process (dashboard is already a server, not a furnace) and exits cleanly.
+    """
+    logger.info(f"Background task: Triggering generate+publish for character {char_id}")
     try:
-        scheduler = ProductionScheduler(dry_run=False)
-        await scheduler.run(target_char_id=char_id)
-        logger.info(f"Background task complete: successfully processed character {char_id}")
+        gen_rc = _get_job("generate").execute()
+        logger.info(f"generate job rc={gen_rc}")
+        pub_rc = _get_job("publish").execute()
+        logger.info(f"publish job rc={pub_rc}")
+        logger.info(f"Background task complete: processed character {char_id}")
     except Exception as e:
         logger.error(f"Background pipeline failed for {char_id}: {e}", exc_info=True)
 

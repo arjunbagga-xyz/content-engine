@@ -22,17 +22,12 @@ from src.generation.image import ImageGenerator
 from src.generation.tts import generate_speech
 from src.generation.video import VideoGenerator
 from src.publishing.queue_manager import ContentQueueManager
+from src.publishing import tunnel as tunnel_mgr
 from src.core.monitoring import SystemMonitor
 
-# Setup robust logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    handlers=[
-        logging.StreamHandler(sys.stdout),
-        logging.FileHandler(config.LOGS_DIR / "production_scheduler.log", encoding="utf-8")
-    ]
-)
+# Setup robust, persistent logging (rotating file + console + debug file).
+from src.core.logging_setup import setup_logging
+setup_logging(level=logging.INFO)
 logger = logging.getLogger("content_engine.scheduler")
 
 class ProductionScheduler:
@@ -95,13 +90,29 @@ class ProductionScheduler:
         logger.info("=============================================================")
         published_count = 0
         try:
-            queue_mgr = ContentQueueManager(self.db, dry_run=self.dry_run)
-            published_count = queue_mgr.process_publishing_queue()
+            # Meta REELS publishing needs a live public tunnel so Meta can
+            # fetch the local video. Ensure cloudflared is up before publishing.
+            tunnel_url = tunnel_mgr.ensure_tunnel()
+            if not tunnel_url:
+                logger.error("No public tunnel available; skipping publish this cycle.")
+            else:
+                queue_mgr = ContentQueueManager(self.db, dry_run=self.dry_run)
+                published_count = queue_mgr.process_publishing_queue()
         except Exception as e:
             import traceback
             tb = traceback.format_exc()
             logger.error(f"Publishing failed: {str(e)}", exc_info=True)
             SystemMonitor.send_error("Publishing Stage Failed", f"Encountered error while processing due posts: {str(e)}", traceback=tb)
+
+        # Retention sweep: prune old outputs/ files (10-day cutoff) so the
+        # video-heavy pipeline doesn't bloat the disk. Runs once per lifecycle.
+        try:
+            import sys as _sys
+            _sys.path.insert(0, str(ROOT))
+            from scratch.cleanup_outputs import sweep as _retention_sweep
+            _retention_sweep(10, apply=True)
+        except Exception as ce:
+            logger.warning(f"Retention sweep skipped: {ce}")
             
         logger.info(f"Published {published_count} posts during this lifecycle run.")
         SystemMonitor.send_info("Pipeline Complete", f"Autonomous social media lifecycle complete. Published {published_count} posts.")
@@ -221,7 +232,7 @@ class ProductionScheduler:
             post.media_path = img_path
             post.media_type = "photo"
 
-        elif post.post_type == "reel":
+        elif post.post_type in ("reel", "debate"):
             from src.generation import pipelines as PL
             from src.generation import sprite_reactor as SR
 
@@ -259,11 +270,21 @@ class ProductionScheduler:
                 self.db.commit()
                 return
 
-            # Backfill the caption with the generated script so the publish
-            # record + downstream text-QA reflect what was actually said.
+            # Keep the raw transcript as post.script (for QA record), but generate a
+            # proper caption (hook + content + hashtags) instead of dumping the transcript.
             script_lines = res.get("script") or []
-            post.caption = " ".join(ln.get("text", "") for ln in script_lines)
-            post.script = post.caption
+            transcript = " ".join(ln.get("text", "") for ln in script_lines)
+            post.script = transcript
+            topic = r.get("topic") or acct_conf.get("role", "")
+            char_names = {ck: cd.get("voice_persona", ck)
+                          for ck, cd in (acct_conf.get("characters") or {}).items()}
+            try:
+                post.caption = await ContentPlanner.generate_caption(
+                    transcript, topic, char_names)
+                logger.info(f"Generated caption for post {post.id}")
+            except Exception as ce:
+                logger.warning(f"Caption generation failed ({ce}); falling back to transcript")
+                post.caption = transcript
             post.media_path = res["path"]
             post.media_type = "video"
             logger.info(f"Reel rendered: {res['path']} (wer={res['qa_report'].get('wer') if res['qa_report'] else None})")
@@ -303,9 +324,15 @@ class ProductionScheduler:
                 logger.warning(f"Dimension verification skipped: {str(e)}")
 
         # Staging: Transition post state to staged!
-        post.state = "staged"
-        self.db.commit()
-        logger.info(f"Media produced successfully! Post #{post.id} is now STAGED and ready to publish.")
+        if post.media_path and os.path.exists(post.media_path):
+            post.state = "staged"
+            self.db.commit()
+            logger.info(f"Media produced successfully! Post #{post.id} is now STAGED and ready to publish.")
+        else:
+            post.state = "failed"
+            post.error_message = f"media generation produced no file (path={post.media_path!r})"
+            self.db.commit()
+            logger.error(f"Post #{post.id} generation produced no media file; marked failed.")
 
 async def main():
     parser = argparse.ArgumentParser(description="Autonomous Social Media Content Engine")
