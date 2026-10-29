@@ -1,9 +1,8 @@
 """Publish job — publishes EXACTLY ONE post, specified by --post-id.
 
 NOT a queue blaster. The planner fires this with the specific post-id when that
-post's scheduled_time has arrived. Brings the tunnel up for the duration, tears it
-down after (no lingering cloudflared/origin server). Records heartbeat so the
-planner can detect a crashed publish and recover it.
+post's scheduled_time has arrived. Records heartbeat so the planner can detect
+a crashed publish and recover it.
 
 States: staged -> publishing (heartbeat) -> published | failed.
 """
@@ -13,7 +12,6 @@ from sqlalchemy.orm import Session
 
 from src.jobs.base import JobBase
 from src.memory.db import SessionLocal, ContentPost
-from src.publishing import tunnel as tunnel_mgr
 from src.publishing.publisher import PublisherRouter
 
 
@@ -79,14 +77,6 @@ class PublishJob(JobBase):
                     mark_done(post.id, "publish", ok=False, error=str(e))
                     post.state = "failed"
                 return 1
-            finally:
-                post.pid = None
-                post.heartbeat_at = None
-                db.commit()
-                try:
-                    tunnel_mgr.stop_tunnel()
-                except Exception as e:
-                    self.logger.warning("stop_tunnel warning: %s", e)
         finally:
             db.close()
 

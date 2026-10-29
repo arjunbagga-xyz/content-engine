@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { width: 608px; height: 1080px; overflow: hidden; }
+body {
+  font-family: "Segoe UI", Helvetica, Arial, sans-serif;
+  background: #ECE5DD;
+  position: relative;
+}
+
+/* Chat wallpaper pattern (subtle doodles) */
+#chat-area {
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 60px;
+  overflow-y: scroll;
+  background: #ECE5DD;
+  background-image: url("data:image/svg+xml,%3Csvg width='260' height='260' viewBox='0 0 260 260' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' stroke='%23D6CFC4' stroke-width='1.2' opacity='0.55'%3E%3Ccircle cx='30' cy='30' r='6'/%3E%3Cpath d='M70 20 q8 10 0 20 q-8 10 0 20'/%3E%3Crect x='110' y='25' width='14' height='14' rx='3'/%3E%3Cpath d='M160 22 l14 8 l-14 8 z'/%3E%3Ccircle cx='210' cy='35' r='4'/%3E%3Cpath d='M235 25 v16 M227 33 h16'/%3E%3Cpath d='M25 90 q10 -12 20 0 q10 12 20 0'/%3E%3Ccircle cx='95' cy='90' r='5'/%3E%3Cpath d='M130 82 l10 10 l-10 10 l-10 -10 z'/%3E%3Cpath d='M170 85 h18 M179 76 v18'/%3E%3Ccircle cx='225' cy='90' r='7'/%3E%3Cpath d='M30 150 q8 8 16 0'/%3E%3Crect x='70' y='142' width='12' height='12' rx='2' transform='rotate(15 76 148)'/%3E%3Cpath d='M115 145 a8 8 0 0 1 16 0 a8 8 0 0 1 -16 0'/%3E%3Cpath d='M165 140 v16 M157 148 h16'/%3E%3Ccircle cx='210' cy='148' r='4'/%3E%3Cpath d='M235 140 q6 8 0 16'/%3E%3C/g%3E%3C/svg%3E");
+}
+
+/* Header */
+#header {
+  position: absolute; top: 0; left: 0; right: 0;
+  height: 64px;
+  background: #008069;
+  display: flex; align-items: center;
+  padding: 0 12px;
+  z-index: 10;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+}
+#header .back { color: #fff; font-size: 22px; margin-right: 10px; width: 20px; }
+#header .avatar {
+  width: 36px; height: 36px; border-radius: 50%;
+  overflow: hidden; margin-right: 10px; flex-shrink: 0;
+  background: #ccc;
+}
+#header .avatar img { width: 100%; height: 100%; object-fit: cover; }
+#header .contact-info { flex: 1; color: #fff; }
+#header .contact-name { font-size: 16px; font-weight: 600; }
+#header .contact-status { font-size: 11px; opacity: 0.85; margin-top: 1px; }
+#header .actions { display: flex; gap: 16px; color: #fff; }
+#header .actions svg { width: 22px; height: 22px; fill: #fff; }
+
+/* Messages */
+#messages {
+  padding: 76px 8px 12px;
+  display: flex;
+  flex-direction: column;
+}
+.timestamp-divider {
+  text-align: center;
+  margin: 10px 0;
+  font-size: 11px;
+  color: #54656F;
+  background: #FFFFFFB3;
+  display: inline-block;
+  padding: 4px 10px;
+  border-radius: 8px;
+  align-self: center;
+}
+.msg-row {
+  display: flex;
+  margin-bottom: 3px;
+  align-items: flex-end;
+}
+.msg-row.received { justify-content: flex-start; }
+.msg-row.sent { justify-content: flex-end; }
+.msg-row .avatar {
+  width: 28px; height: 28px; border-radius: 50%;
+  overflow: hidden; margin-right: 6px; flex-shrink: 0;
+  background: #ccc;
+  visibility: hidden;
+}
+.msg-row.first .avatar { visibility: visible; }
+.msg-row .avatar img { width: 100%; height: 100%; object-fit: cover; }
+
+.bubble {
+  max-width: 420px;
+  padding: 6px 7px 8px 9px;
+  border-radius: 8px;
+  font-size: 14.2px;
+  line-height: 19px;
+  color: #111B21;
+  position: relative;
+  word-wrap: break-word;
+  box-shadow: 0 1px 0.5px rgba(11,20,26,0.13);
+}
+.bubble .text { padding-right: 52px; }
+.received .bubble { background: #FFFFFF; border-top-left-radius: 0; margin-left: 0; }
+.sent .bubble { background: #D9FDD3; border-top-right-radius: 0; }
+.msg-row.first.received .bubble { border-top-left-radius: 8px; }
+.msg-row.first.sent .bubble { border-top-right-radius: 8px; }
+
+/* Bubble tails */
+.msg-row.first.received .bubble::before {
+  content: ''; position: absolute; left: -8px; bottom: 0;
+  width: 0; height: 0;
+  border-bottom: 8px solid transparent;
+  border-top: 13px solid #FFFFFF;
+  border-left: 8px solid transparent;
+  border-radius: 0 0 0 6px;
+}
+.msg-row.first.sent .bubble::after {
+  content: ''; position: absolute; right: -8px; bottom: 0;
+  width: 0; height: 0;
+  border-bottom: 8px solid transparent;
+  border-top: 13px solid #D9FDD3;
+  border-right: 8px solid transparent;
+  border-radius: 0 0 6px 0;
+}
+
+.meta {
+  float: right;
+  margin: 8px 0 -4px 6px;
+  font-size: 11px;
+  color: #667781;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.meta .ticks { display: inline-flex; }
+.meta .ticks svg { width: 16px; height: 11px; }
+.ticks .tick { fill: #667781; }
+.ticks.read .tick { fill: #53BDEB; }
+
+/* Typing indicator */
+.typing-row { display: flex; margin-bottom: 3px; align-items: flex-end; }
+.typing-row .avatar {
+  width: 28px; height: 28px; border-radius: 50%;
+  overflow: hidden; margin-right: 6px; flex-shrink: 0;
+  background: #ccc;
+}
+.typing-row .avatar img { width: 100%; height: 100%; object-fit: cover; }
+.typing-bubble {
+  background: #FFFFFF;
+  border-radius: 8px;
+  padding: 10px 14px;
+  box-shadow: 0 1px 0.5px rgba(11,20,26,0.13);
+  display: flex; gap: 4px; align-items: center;
+}
+.typing-bubble .dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: #8696A0;
+  animation: bounce 1.2s infinite;
+}
+.typing-bubble .dot:nth-child(2) { animation-delay: 0.15s; }
+.typing-bubble .dot:nth-child(3) { animation-delay: 0.3s; }
+@keyframes bounce {
+  0%, 60%, 100% { transform: translateY(0); }
+  30% { transform: translateY(-5px); }
+}
+
+/* Input bar */
+#input-bar {
+  position: absolute; bottom: 0; left: 0; right: 0;
+  height: 60px;
+  background: #F0F2F5;
+  display: flex; align-items: center;
+  padding: 0 8px; gap: 8px;
+  z-index: 10;
+}
+#input-bar .icon-btn {
+  width: 24px; height: 24px; color: #54656F;
+  display: flex; align-items: center; justify-content: center;
+}
+#input-bar .icon-btn svg { width: 24px; height: 24px; fill: #54656F; }
+#input-bar .text-field {
+  flex: 1; height: 40px;
+  background: #fff;
+  border-radius: 20px;
+  display: flex; align-items: center;
+  padding: 0 14px;
+  color: #8696A0;
+  font-size: 14px;
+}
+#input-bar .mic-btn {
+  width: 40px; height: 40px; border-radius: 50%;
+  background: #008069;
+  display: flex; align-items: center; justify-content: center;
+}
+#input-bar .mic-btn svg { width: 20px; height: 20px; fill: #fff; }
+
+/* Typing in input bar state */
+#input-bar.typing .text-field { color: #111B21; }
+</style>
+</head>
+<body>
+
+<div id="header">
+  <div class="back">&#x2039;</div>
+  <div class="avatar"><img id="contact-avatar" src="" alt=""></div>
+  <div class="contact-info">
+    <div class="contact-name" id="contact-name">Vegeta</div>
+    <div class="contact-status" id="contact-status">online</div>
+  </div>
+  <div class="actions">
+    <svg viewBox="0 0 24 24"><path d="M6.62 10.79a15.05 15.05 0 0 0 6.59 6.59l2.2-2.2a1 1 0 0 1 1.02-.24 11.36 11.36 0 0 0 3.57.57 1 1 0 0 1 1 1V20a1 1 0 0 1-1 1A17 17 0 0 1 3 4a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1 11.36 11.36 0 0 0 .57 3.57 1 1 0 0 1-.25 1.02z"/></svg>
+    <svg viewBox="0 0 24 24"><path d="M17 10.5V7a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-3.5l4 4v-11l-4 4z"/></svg>
+    <svg viewBox="0 0 24 24"><path d="M12 7a2 2 0 1 0 0-4 2 2 0 0 0 0 4zm0 7a2 2 0 1 0 0-4 2 2 0 0 0 0 4zm0 7a2 2 0 1 0 0-4 2 2 0 0 0 0 4z"/></svg>
+  </div>
+</div>
+
+<div id="chat-area">
+  <div id="messages"></div>
+</div>
+
+<div id="input-bar">
+  <div class="icon-btn"><svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm-3.5 7a1.5 1.5 0 1 1 3 0 1.5 1.5 0 0 1-3 0zm4 0a1.5 1.5 0 1 1 3 0 1.5 1.5 0 0 1-3 0zM12 18a5.5 5.5 0 0 1-5.1-3.5h10.2A5.5 5.5 0 0 1 12 18z"/></svg></div>
+  <div class="text-field" id="input-text">Message</div>
+  <div class="icon-btn"><svg viewBox="0 0 24 24"><path d="M9 3L7.17 5H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-3.17L15 3H9zm3 15a5 5 0 1 1 0-10 5 5 0 0 1 0 10zm0-2a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/></svg></div>
+  <div class="mic-btn"><svg viewBox="0 0 24 24"><path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V22h2v-3.08A7 7 0 0 0 19 12h-2z"/></svg></div>
+</div>
+
+<script>
+// State is injected by the renderer via window.setChatState()
+window.setChatState = function(state) {
+  const msgs = document.getElementById('messages');
+  msgs.innerHTML = '';
+
+  // Timestamp divider
+  const ts = document.createElement('div');
+  ts.className = 'timestamp-divider';
+  ts.textContent = state.timestamp || 'TODAY';
+  msgs.appendChild(ts);
+
+  let lastSpeaker = null;
+  state.messages.forEach((m, i) => {
+    const row = document.createElement('div');
+    row.className = 'msg-row ' + (m.sent ? 'sent' : 'received') + (lastSpeaker !== m.speaker ? ' first' : '');
+    lastSpeaker = m.speaker;
+
+    const av = document.createElement('div');
+    av.className = 'avatar';
+    // WhatsApp DMs: only the CONTACT's avatar shows (on received messages).
+    // Sent messages have no avatar.
+    if (!m.sent) {
+      av.innerHTML = '<img src="' + state.contactAvatar + '">';
+    }
+    row.appendChild(av);
+
+    const bubble = document.createElement('div');
+    bubble.className = 'bubble';
+    bubble.innerHTML = '<span class="text">' + m.text + '</span>' +
+      '<span class="meta">' + (m.time || '12:34') +
+      (m.sent ? '<span class="ticks' + (m.read ? ' read' : '') + '"><svg viewBox="0 0 16 11"><path class="tick" d="M11.07.65 5.1 8.6 2.4 5.9l-.85.85 3.55 3.55L12.5 1.5z"/><path class="tick" d="M15.07.65 9.1 8.6l-.7-.7-.85.85 1.55 1.55L16.5 1.5z"/></svg></span>' : '') +
+      '</span>';
+    row.appendChild(bubble);
+    msgs.appendChild(row);
+  });
+
+  // Typing indicator
+  if (state.typing) {
+    const tRow = document.createElement('div');
+    tRow.className = 'typing-row';
+    tRow.innerHTML = '<div class="avatar"><img src="' +
+      (state.typing === 'me' ? state.meAvatar : state.contactAvatar) + '"></div>' +
+      '<div class="typing-bubble"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>';
+    msgs.appendChild(tRow);
+  }
+
+  // Scroll to bottom
+  const area = document.getElementById('chat-area');
+  area.scrollTop = area.scrollHeight;
+};
+
+window.setContact = function(name, avatarPath, status) {
+  document.getElementById('contact-name').textContent = name;
+  document.getElementById('contact-status').textContent = status || 'online';
+  document.getElementById('contact-avatar').src = avatarPath;
+};
+</script>
+</body>
+</html>

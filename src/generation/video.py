@@ -14,7 +14,7 @@ logger = logging.getLogger("content_engine.video_generator")
 
 # --- Hardware encoder selection (NVENC on the 1650, CPU fallback otherwise) ---
 # NVENC is a dedicated encoder block on the GTX 1650, independent of its CUDA
-# cores. It encodes 1080x1920 H.264 at ~10x realtime with ~zero CPU load. We
+# cores. It encodes 608x1080 H.264 at ~10x realtime with ~zero CPU load. We
 # probe ffmpeg once for the h264_nvenc encoder; if absent we fall back to the
 # old software libx264 (slow but always available).
 _NVENC_OK = None  # None = not probed yet
@@ -28,9 +28,20 @@ def _use_nvenc() -> bool:
                 ["ffmpeg", "-hide_banner", "-encoders"],
                 capture_output=True, text=True, timeout=30,
             ).stdout
-            _NVENC_OK = "h264_nvenc" in out
+            has_encoder = "h264_nvenc" in out
         except Exception:
-            _NVENC_OK = False
+            has_encoder = False
+        # ffmpeg may expose h264_nvenc even without a usable CUDA device
+        # (e.g. Ubuntu's ffmpeg has NVENC support but the 920M has no CUDA).
+        # Verify an actual CUDA device exists before committing to NVENC.
+        has_cuda = False
+        if has_encoder:
+            try:
+                import torch
+                has_cuda = torch.cuda.is_available()
+            except Exception:
+                has_cuda = False
+        _NVENC_OK = has_encoder and has_cuda
         if _NVENC_OK:
             logger.info("video: h264_nvenc available -> using NVENC hardware encode")
         else:
@@ -43,8 +54,9 @@ def vcodec_args() -> list:
     if _use_nvenc():
         # -cq 23 ~= libx264 -crf 26 visually; -preset p1 = fastest.
         # -tune ull (ultra-low-latency) skips lookahead for speed.
-        return ["-c:v", "h264_nvenc", "-preset", "p1", "-tune", "ull", "-cq", "23"]
-    return ["-c:v", "libx264", "-preset", "ultrafast", "-crf", "26"]
+        # -r 45: 45fps — half the size of 60fps, no visible quality loss for talking-head content.
+        return ["-c:v", "h264_nvenc", "-preset", "p1", "-tune", "ull", "-cq", "23", "-r", "45"]
+    return ["-c:v", "libx264", "-preset", "ultrafast", "-crf", "26", "-r", "45"]
 
 
 def _character_key_of(sprite_path: str) -> str:
@@ -73,7 +85,7 @@ _GRADE_FILTERS = {
     "soft_vignette": "vignette=PI/4",
     "dark_red": "eq=saturation=1.3:gamma_r=1.3:gamma_g=0.8:gamma_b=0.8:brightness=-0.04",
     "amber_boost": "eq=saturation=1.3:gamma_r=1.2:gamma_g=1.05:gamma_b=0.7",
-    "pulse": "zoompan=z='min(zoom+0.0008,1.04)':d=1:s=1080x1920:fps=30,eq=saturation=1.15",
+    "pulse": "zoompan=z='min(zoom+0.0008,1.04)':d=1:s=608x1080:fps=30,eq=saturation=1.15",
 }
 
 
@@ -279,7 +291,7 @@ class VideoGenerator:
         ass_header = f"""[Script Info]
 ScriptType: v4.00+
 PlayResX: 1080
-PlayResY: 1920
+PlayResY: 1080
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
@@ -325,7 +337,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         is_image = background_video_path.lower().endswith(('.png', '.jpg', '.jpeg', '.webp'))
         
         # Subtitle-burned variant (try first)
-        vfilter_sub = f"[0:v]scale=w=1080:h=1920:force_original_aspect_ratio=increase,crop=1080:1920,subtitles='{escaped_ass_path}'[v]"
+        vfilter_sub = f"[0:v]scale=w=608:h=1080:force_original_aspect_ratio=increase,crop=608:1080,subtitles='{escaped_ass_path}'[v]"
         sub_cmd = ["ffmpeg", "-y"]
         if is_image:
             sub_cmd.extend(["-loop", "1", "-i", background_video_path])
@@ -348,7 +360,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             nosub_cmd.extend(["-stream_loop", "-1", "-i", background_video_path])
         nosub_cmd.extend([
             "-i", audio_path,
-            "-vf", "scale=w=1080:h=1920:force_original_aspect_ratio=increase,crop=1080:1920",
+            "-vf", "scale=w=608:h=1080:force_original_aspect_ratio=increase,crop=608:1080",
             *vcodec_args(),
             "-c:a", "aac", "-b:a", "128k",
             "-shortest",
@@ -404,9 +416,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             # Premultiply: composite onto fresh transparent canvas so RGB is black where alpha=0
             transparent = Image.new("RGBA", sp_img.size, (0, 0, 0, 0))
             sp_img = Image.alpha_composite(transparent, sp_img)
-            # Target height as a fraction of 1920 (reel height); keep aspect.
-            target_h = int(1920 * sprite_scale)
-            max_h = int(1920 * 0.7)
+            # Target height as a fraction of 1080 (reel height); keep aspect.
+            target_h = int(1080 * sprite_scale)
+            max_h = int(1080 * 0.7)
             if target_h > max_h:
                 target_h = max_h
             ratio = target_h / sp_img.height
@@ -432,13 +444,13 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             x_pos, y_pos = "(W-overlay_w)/2", "H-overlay_h-80"
 
         grade_filter = _grade_filter(grade)
-        # Normalize the gameplay clip to the reel canvas (1080x1920) BEFORE overlaying the
-        # sprite. The sprite is scaled against a 1920px-frame assumption (target_h = 1920 *
-        # sprite_scale), so if the source clip isn't 1080x1920 the sprite overflows/clips.
+        # Normalize the gameplay clip to the reel canvas (608x1080) BEFORE overlaying the
+        # sprite. The sprite is scaled against a 1080px-frame assumption (target_h = 1080 *
+        # sprite_scale), so if the source clip isn't 608x1080 the sprite overflows/clips.
         # Normalizing first makes placement deterministic regardless of which gameplay
         # clip was randomly selected (e.g. subway 288x640, beat saber 608x1080, minecraft 720x1280).
-        norm = "[0:v]scale=1080:1920:force_original_aspect_ratio=decrease," \
-               "pad=1080:1920:(ow-iw)/2:(oh-ih)/2,setsar=1[bg];"
+        norm = "[0:v]scale=608:1080:force_original_aspect_ratio=decrease," \
+               "pad=608:1080:(ow-iw)/2:(oh-ih)/2,setsar=1[bg];"
         if grade_filter:
             filter_str = (
                 f"{norm}[bg][1:v]overlay={x_pos}:{y_pos}[stacked];"
@@ -484,7 +496,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         if proc.returncode != 0 or not os.path.exists(_out_abs) or os.path.getsize(_out_abs) < 1024:
             logger.warning(f"Sprite-reel subtitle-burn failed (code {proc.returncode}); retry without subtitles.")
             with open(os.path.join(_tempfile.gettempdir(), "_burn_err.txt"), "w") as _ef:
-                _ef.write(f"rc={proc.returncode}\nCMD:\n{cmd_str}\n\nSTDERR:\n{proc.stderr}\n")
+                _ef.write(f"rc={proc.returncode}\nCMD:\n{sub_cmd}\n\nSTDERR:\n{proc.stderr}\n")
             proc = await _run(nosub_cmd, cwd=_tempfile.gettempdir())
             if proc.returncode != 0:
                 logger.error(f"Sprite-reel render failed: {proc.stderr}")
@@ -520,8 +532,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             sp = Image.open(sprite_path).convert("RGBA")
             transparent = Image.new("RGBA", sp.size, (0, 0, 0, 0))
             sp = Image.alpha_composite(transparent, sp)
-            target_h = int(1920 * sprite_scale)
-            max_h = int(1920 * 0.7)
+            target_h = int(1080 * sprite_scale)
+            max_h = int(1080 * 0.7)
             if target_h > max_h:
                 target_h = max_h
             ratio = target_h / sp.height

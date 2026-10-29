@@ -20,7 +20,8 @@ from pathlib import Path
 logger = logging.getLogger("content_engine.rvc_worker")
 
 _RVC_REPO = Path(__file__).resolve().parent.parent.parent / "rvc_repo"
-_RVC_PY = str(Path(__file__).resolve().parent.parent.parent / "rvc_env" / "Scripts" / "python.exe")
+_RVC_ENV = Path(__file__).resolve().parent.parent.parent / "rvc_env"
+_RVC_PY = str(_RVC_ENV / ("Scripts/python.exe" if os.name == "nt" else "bin/python"))
 _SERVER = str(_RVC_REPO / "worker_server.py")
 
 _lock = threading.Lock()
@@ -45,12 +46,18 @@ def _ensure_server():
             # Hide the window: this is a headless worker spawned by the scheduler /
             # generate step. Without this it pops a visible console per RVC-worker
             # start (and on every restart), which flashes during autopilot runs.
-            creationflags=0x08000000,  # CREATE_NO_WINDOW
+            **({"creationflags": 0x08000000} if os.name == "nt" else {}),
+            # CREATE_NO_WINDOW (Windows only)
         )
         # Wait for SERVER_READY (or SERVER_FAIL)
         ready = _proc.stdout.readline().strip()
-        if ready != "SERVER_READY":
-            err = _proc.stderr.read()
+        if not ready.startswith("SERVER_READY"):
+            err = ""
+            if _proc.stderr is not None:
+                try:
+                    err = _proc.stderr.read()
+                except Exception:
+                    err = ""
             raise RuntimeError(f"RVC server failed to start: {ready} {err[:400]}")
         logger.info("RVC persistent worker server started on cuda:0")
         return _proc

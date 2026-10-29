@@ -363,8 +363,8 @@ class SpriteReactor:
             raise RuntimeError("No video segments rendered")
 
         # Concatenate segment videos via filter_complex. Normalize each input to a
-        # fixed 1080x1920 / SAR=1 first so the concat filter never chokes on
-        # differing resolutions (gameplay clips vary 720x1280 vs 1080x1920).
+        # fixed 608x1080 / SAR=1 first so the concat filter never chokes on
+        # differing resolutions (gameplay clips vary 720x1280 vs 608x1080).
         # ffmpeg concat expects inputs INTERLEAVED per segment: [v0][a0][v1][a1]...
         n = len(seg_videos)
         inputs = []
@@ -372,14 +372,14 @@ class SpriteReactor:
             inputs += ["-i", v]
         vchain = ""
         for i in range(n):
-            vchain += (f"[{i}:v]scale=1080:1920:force_original_aspect_ratio=decrease,"
-                       f"pad=1080:1920:(ow-iw)/2:(oh-ih)/2,setsar=1[v{i}];")
+            vchain += (f"[{i}:v]scale=608:1080:force_original_aspect_ratio=decrease,"
+                       f"pad=608:1080:(ow-iw)/2:(oh-ih)/2,setsar=1[v{i}];")
         # interleave: seg0 video, seg0 audio, seg1 video, seg1 audio, ...
         interleave = "".join(f"[v{i}][{i}:a]" for i in range(n))
         filter_c = f"{vchain}{interleave}concat=n={n}:v=1:a=1[v][a]"
         r = _sp.run(["ffmpeg", "-y", *inputs, "-filter_complex", filter_c,
                      "-map", "[v]", "-map", "[a]",
-                     "-c:v", "libx264", "-preset", "ultrafast", "-crf", "26",
+                     "-c:v", "libx264", "-preset", "ultrafast", "-crf", "26", "-r", "45",
                      "-c:a", "aac", "-b:a", "128k", output_path],
                     capture_output=True, text=True)
         if r.returncode != 0 or not os.path.exists(output_path):
@@ -444,6 +444,9 @@ class SpriteReactor:
         seg_range = char_conf.get("seg_range", [8, 16])
         account_name = char_conf.get("name", account_id)
         role = char_conf.get("role", "")
+        
+        # Randomize who opens the debate (don't always start with leads[0])
+        random.shuffle(leads)
 
         if not topic:
             universe = char_conf.get("topic_universe") or []
@@ -586,11 +589,11 @@ class SpriteReactor:
             v_inputs += ["-i", v]
         vchain = ""
         for i in range(n):
-            vchain += (f"[{i}:v]scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,setsar=1[v{i}];")
+            vchain += (f"[{i}:v]scale=608:1080:force_original_aspect_ratio=decrease,pad=608:1080:(ow-iw)/2:(oh-ih)/2,setsar=1[v{i}];")
         interleave = "".join(f"[v{i}][{i}:a]" for i in range(n))
         v_filter = f"{vchain}{interleave}concat=n={n}:v=1:a=1[v][a]"
         r = _sp.run(["ffmpeg", "-y", *v_inputs, "-filter_complex", v_filter, "-map", "[v]", "-map", "[a]",
-                     "-c:v", "libx264", "-preset", "ultrafast", "-crf", "26", "-c:a", "aac", "-b:a", "128k", output_path],
+                     "-c:v", "libx264", "-preset", "ultrafast", "-crf", "26", "-r", "45", "-c:a", "aac", "-b:a", "128k", output_path],
                     capture_output=True, text=True)
         if r.returncode != 0 or not os.path.exists(output_path):
             logger.error(f"[tvp] concat failed: {r.stderr[-400:]}")
@@ -808,13 +811,13 @@ class SpriteReactor:
             v_inputs += ["-i", v]
         vchain = ""
         for i in range(n):
-            vchain += (f"[{i}:v]scale=1080:1920:force_original_aspect_ratio=decrease,"
-                       f"pad=1080:1920:(ow-iw)/2:(oh-ih)/2,setsar=1[v{i}];")
+            vchain += (f"[{i}:v]scale=608:1080:force_original_aspect_ratio=decrease,"
+                       f"pad=608:1080:(ow-iw)/2:(oh-ih)/2,setsar=1[v{i}];")
         interleave = "".join(f"[v{i}][{i}:a]" for i in range(n))
         v_filter = f"{vchain}{interleave}concat=n={n}:v=1:a=1[v][a]"
         r = _sp.run(["ffmpeg", "-y", *v_inputs, "-filter_complex", v_filter,
                      "-map", "[v]", "-map", "[a]",
-                     "-c:v", "libx264", "-preset", "ultrafast", "-crf", "26",
+                     "-c:v", "libx264", "-preset", "ultrafast", "-crf", "26", "-r", "45",
                      "-c:a", "aac", "-b:a", "128k", output_path],
                     capture_output=True, text=True)
         if r.returncode != 0 or not os.path.exists(output_path):

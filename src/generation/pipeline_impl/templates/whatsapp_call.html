@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { width: 608px; height: 1080px; overflow: hidden; }
+body {
+  font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  background: linear-gradient(180deg, #1C1C2E 0%, #0D0D14 100%);
+  color: #fff;
+  position: relative;
+}
+
+/* ===== Incoming call screen ===== */
+#incoming {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column;
+  align-items: center;
+  padding-top: 90px;
+  transition: opacity 0.3s;
+}
+#incoming.hidden { opacity: 0; pointer-events: none; }
+
+.caller-avatar {
+  width: 96px; height: 96px; border-radius: 50%;
+  overflow: hidden;
+  box-shadow: 0 0 0 3px rgba(255,255,255,0.15), 0 8px 24px rgba(0,0,0,0.4);
+  margin-bottom: 18px;
+  animation: pulse 2s infinite;
+}
+.caller-avatar img { width: 100%; height: 100%; object-fit: cover; }
+@keyframes pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.04); }
+}
+.caller-name { font-size: 26px; font-weight: 500; margin-bottom: 6px; }
+.caller-status { font-size: 15px; color: rgba(255,255,255,0.65); margin-bottom: 10px; }
+.incoming-label { font-size: 15px; color: rgba(255,255,255,0.5); }
+
+.incoming-actions {
+  position: absolute; bottom: 90px; left: 0; right: 0;
+  display: flex; justify-content: space-between;
+  padding: 0 60px;
+}
+.action-block { text-align: center; }
+.round-btn {
+  width: 68px; height: 68px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  margin: 0 auto 10px;
+}
+.round-btn.decline { background: linear-gradient(135deg, #FF5B5B, #E53935); }
+.round-btn.accept { background: linear-gradient(135deg, #4CD964, #34C759); }
+.round-btn svg { width: 30px; height: 30px; fill: #fff; }
+.round-btn.decline svg { transform: rotate(135deg); }
+.action-label { font-size: 13px; color: rgba(255,255,255,0.75); }
+
+/* ===== Active call screen (WhatsApp style) ===== */
+#active {
+  position: absolute; inset: 0;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+}
+#active.visible { display: flex; }
+
+.active-header {
+  margin-top: 70px;
+  text-align: center;
+}
+.active-avatar {
+  width: 64px; height: 64px; border-radius: 50%;
+  overflow: hidden;
+  margin: 0 auto 10px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+}
+.active-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.active-name { font-size: 20px; font-weight: 600; }
+.active-timer { font-size: 14px; color: rgba(255,255,255,0.6); margin-top: 2px; }
+
+.speaking-indicator {
+  margin-top: 24px;
+  padding: 6px 16px;
+  background: rgba(77, 217, 100, 0.15);
+  border: 1px solid rgba(77, 217, 100, 0.4);
+  border-radius: 16px;
+  font-size: 13px; color: #4DD964;
+  display: flex; align-items: center; gap: 6px;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+.speaking-indicator.visible { opacity: 1; }
+.speaking-indicator .eq {
+  display: flex; gap: 2px; align-items: flex-end; height: 12px;
+}
+.speaking-indicator .eq span {
+  width: 2.5px; background: #4DD964; border-radius: 1px;
+  animation: eq 0.8s infinite ease-in-out;
+}
+.speaking-indicator .eq span:nth-child(2) { animation-delay: 0.15s; }
+.speaking-indicator .eq span:nth-child(3) { animation-delay: 0.3s; }
+.speaking-indicator .eq span:nth-child(4) { animation-delay: 0.45s; }
+@keyframes eq {
+  0%, 100% { height: 4px; }
+  50% { height: 12px; }
+}
+
+/* Call controls */
+.controls {
+  position: absolute; bottom: 140px; left: 0; right: 0;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 28px 0;
+  justify-items: center;
+  padding: 0 40px;
+}
+.ctl {
+  text-align: center;
+}
+.ctl-btn {
+  width: 64px; height: 64px; border-radius: 50%;
+  background: rgba(255,255,255,0.12);
+  display: flex; align-items: center; justify-content: center;
+  margin: 0 auto 8px;
+}
+.ctl-btn svg { width: 26px; height: 26px; fill: #fff; }
+.ctl-btn.on { background: #fff; }
+.ctl-btn.on svg { fill: #128C7E; }
+.ctl-label { font-size: 12px; color: rgba(255,255,255,0.75); }
+
+/* End call */
+.end-call {
+  position: absolute; bottom: 56px; left: 50%;
+  transform: translateX(-50%);
+  width: 64px; height: 64px; border-radius: 50%;
+  background: linear-gradient(135deg, #FF5B5B, #E53935);
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 4px 16px rgba(229, 57, 53, 0.4);
+}
+.end-call svg { width: 28px; height: 28px; fill: #fff; transform: rotate(135deg); }
+</style>
+</head>
+<body>
+
+<!-- Incoming call -->
+<div id="incoming">
+  <div class="caller-avatar"><img id="inc-avatar" src=""></div>
+  <div class="caller-name" id="inc-name">Vegeta</div>
+  <div class="caller-status">WhatsApp call...</div>
+  <div class="incoming-actions">
+    <div class="action-block">
+      <div class="round-btn decline"><svg viewBox="0 0 24 24"><path d="M6.62 10.79a15.05 15.05 0 0 0 6.59 6.59l2.2-2.2a1 1 0 0 1 1.02-.24 11.36 11.36 0 0 0 3.57.57 1 1 0 0 1 1 1V20a1 1 0 0 1-1 1A17 17 0 0 1 3 4a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1 11.36 11.36 0 0 0 .57 3.57 1 1 0 0 1-.25 1.02z"/></svg></div>
+      <div class="action-label">Decline</div>
+    </div>
+    <div class="action-block">
+      <div class="round-btn accept"><svg viewBox="0 0 24 24"><path d="M6.62 10.79a15.05 15.05 0 0 0 6.59 6.59l2.2-2.2a1 1 0 0 1 1.02-.24 11.36 11.36 0 0 0 3.57.57 1 1 0 0 1 1 1V20a1 1 0 0 1-1 1A17 17 0 0 1 3 4a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1 11.36 11.36 0 0 0 .57 3.57 1 1 0 0 1-.25 1.02z"/></svg></div>
+      <div class="action-label">Accept</div>
+    </div>
+  </div>
+</div>
+
+<!-- Active call -->
+<div id="active">
+  <div class="active-header">
+    <div class="active-avatar"><img id="act-avatar" src=""></div>
+    <div class="active-name" id="act-name">Vegeta</div>
+    <div class="active-timer" id="act-timer">0:00</div>
+  </div>
+
+  <div class="speaking-indicator" id="speaking">
+    <div class="eq"><span></span><span></span><span></span><span></span></div>
+    <span id="speaking-name">Goku</span>
+  </div>
+
+  <div class="controls">
+    <div class="ctl"><div class="ctl-btn" id="ctl-speaker"><svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3A4.5 4.5 0 0 0 14 7.97v8.05A4.5 4.5 0 0 0 16.5 12zM14 3.23v2.06a6.98 6.98 0 0 1 0 13.42v2.06a9 9 0 0 0 0-17.54z"/></svg></div><div class="ctl-label">Speaker</div></div>
+    <div class="ctl"><div class="ctl-btn" id="ctl-mute"><svg viewBox="0 0 24 24"><path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z"/></svg></div><div class="ctl-label">Mute</div></div>
+    <div class="ctl"><div class="ctl-btn" id="ctl-video"><svg viewBox="0 0 24 24"><path d="M17 10.5V7a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-3.5l4 4v-11l-4 4z"/></svg></div><div class="ctl-label">Video</div></div>
+    <div class="ctl"><div class="ctl-btn"><svg viewBox="0 0 24 24"><path d="M6.62 10.79a15.05 15.05 0 0 0 6.59 6.59l2.2-2.2a1 1 0 0 1 1.02-.24 11.36 11.36 0 0 0 3.57.57 1 1 0 0 1 1 1V20a1 1 0 0 1-1 1A17 17 0 0 1 3 4a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1 11.36 11.36 0 0 0 .57 3.57 1 1 0 0 1-.25 1.02z"/></svg></div><div class="ctl-label">Add call</div></div>
+    <div class="ctl"><div class="ctl-btn"><svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 9 9h-2a7 7 0 1 1-7-7V3zm0 4a5 5 0 1 0 5 5h-2a3 3 0 1 0-3-3V7z"/></svg></div><div class="ctl-label">Hold</div></div>
+    <div class="ctl"><div class="ctl-btn"><svg viewBox="0 0 24 24"><path d="M20 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2zm0 4-8 5-8-5V6l8 5 8-5v2z"/></svg></div><div class="ctl-label">Message</div></div>
+  </div>
+
+  <div class="end-call"><svg viewBox="0 0 24 24"><path d="M6.62 10.79a15.05 15.05 0 0 0 6.59 6.59l2.2-2.2a1 1 0 0 1 1.02-.24 11.36 11.36 0 0 0 3.57.57 1 1 0 0 1 1 1V20a1 1 0 0 1-1 1A17 17 0 0 1 3 4a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1 11.36 11.36 0 0 0 .57 3.57 1 1 0 0 1-.25 1.02z"/></svg></div>
+</div>
+
+<script>
+window.setCallState = function(state) {
+  // state: { phase: 'incoming'|'active', name, avatar, elapsed, speaking }
+  const incoming = document.getElementById('incoming');
+  const active = document.getElementById('active');
+
+  if (state.phase === 'incoming') {
+    incoming.classList.remove('hidden');
+    active.classList.remove('visible');
+    document.getElementById('inc-name').textContent = state.name;
+    document.getElementById('inc-avatar').src = state.avatar;
+  } else {
+    incoming.classList.add('hidden');
+    active.classList.add('visible');
+    document.getElementById('act-name').textContent = state.name;
+    document.getElementById('act-avatar').src = state.avatar;
+
+    const m = Math.floor(state.elapsed / 60);
+    const s = Math.floor(state.elapsed % 60);
+    document.getElementById('act-timer').textContent = m + ':' + String(s).padStart(2, '0');
+
+    const spk = document.getElementById('speaking');
+    if (state.speaking) {
+      spk.classList.add('visible');
+      document.getElementById('speaking-name').textContent = state.speaking;
+    } else {
+      spk.classList.remove('visible');
+    }
+  }
+};
+</script>
+</body>
+</html>

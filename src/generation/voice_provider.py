@@ -226,7 +226,8 @@ def _rvc_convert(narrator_wav: str, character: str, out_path: str,
     # This fork (liujing04) ships inference at rvc_repo/infer/cli.py (not tools/infer_cli.py).
     rvc_root = os.environ.get("RVC_ROOT", "")
     rvc_repo = str(Path(__file__).resolve().parent.parent.parent / "rvc_repo")
-    rvc_py = str(Path(__file__).resolve().parent.parent.parent / "rvc_env" / "Scripts" / "python.exe")
+    _rvc_env = Path(__file__).resolve().parent.parent.parent / "rvc_env"
+    rvc_py = str(_rvc_env / ("Scripts/python.exe" if os.name == "nt" else "bin/python"))
     if rvc_root:
         infer_script = os.path.join(rvc_root, "infer", "cli.py")
     else:

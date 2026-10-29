@@ -1,0 +1,4 @@
+usage: run_job.py [-h] [--list] [--post-id POST_ID] [--character CHARACTER]
+                  [--pipeline PIPELINE] [--topic TOPIC] [--batch BATCH]
+                  [job]
+run_job.py: error: unrecognized arguments: ProjectsContent Enginelogspub_255_bg.log

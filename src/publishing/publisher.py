@@ -5,6 +5,7 @@ import logging
 import requests
 from pathlib import Path
 from src.core.config import config
+from src.publishing import snag_host
 
 logger = logging.getLogger("content_engine.publisher")
 
@@ -287,33 +288,13 @@ class PublisherRouter:
                 # "REELS", so treat debate identically to reel for publishing.
                 if post_type in ("reel", "debate"):
                     # Official Meta Content Publishing API (token-based, no login).
-                    # Handles re-encode -> cloudflared host -> container -> poll -> publish.
+                    # Uploads to OCI snag-host -> serves HTTPS URL to Meta API.
                     if not post.media_path or not os.path.exists(post.media_path):
                         raise FileNotFoundError(f"Media file not found for reel: {post.media_path}")
                     from src.publishing.official_publisher import OfficialIGPublisher
-                    from src.publishing import tunnel as tunnel_mgr
-                    last_err = None
-                    # Retry with a fresh tunnel each attempt. The cloudflared
-                    # quick-tunnel local proxy is intermittently flaky for large
-                    # video files (Meta fetches the video through the tunnel); a
-                    # fresh tunnel + re-check usually succeeds within a few tries.
-                    for attempt in range(1, 4):
-                        try:
-                            tunnel_mgr.ensure_tunnel()
-                            publisher = OfficialIGPublisher(post.character_id)
-                            post_id = publisher.post_reel(post.media_path, post.caption or "")
-                            post.media_type = "video"
-                            break
-                        except Exception as e:
-                            last_err = e
-                            logger.warning("Reel publish attempt %d failed: %s", attempt, e)
-                            # Back off so subsequent attempts land in a different
-                            # ngrok/Meta window — the free tunnel is intermittently
-                            # flaky (502/530) but DOES deliver on a good window
-                            # (post 86 published this way). 8s was too short.
-                            time.sleep(90)
-                    else:
-                        raise last_err or RuntimeError("Reel publish failed after retries")
+                    publisher = OfficialIGPublisher(post.character_id)
+                    post_id = publisher.post_reel(post.media_path, post.caption or "")
+                    post.media_type = "video"
                 else:
                     publisher = InstagramPublisher(char_id, dry_run=dry_run)
                     if post_type in ("static", "photo", "quote_card"):

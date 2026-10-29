@@ -25,7 +25,50 @@ Producer = Callable[..., Awaitable[dict]]
 PIPELINE_REGISTRY: Dict[str, Producer] = {
     "debate_2lead_cameo": SR.SpriteReactor.produce_account_debate,
     "roundtable": SR.SpriteReactor.produce_roundtable,
+    "chat_roast": lambda acct, out, topic=None, num_turns=None: _run_chat_roast(acct, out, topic, num_turns),
+    "x_comments": lambda acct, out, topic=None, num_turns=None: _run_x_comments(acct, out, topic, num_turns),
+    "phone_call": lambda acct, out, topic=None, num_turns=None: _run_phone_call(acct, out, topic, num_turns),
+    "storytime": lambda acct, out, topic=None, num_turns=None: _run_storytime(acct, out, topic, num_turns),
 }
+
+
+async def _run_chat_roast(acct, out, topic, num_turns, tone_plan=None):
+    from src.generation.pipeline_impl.chat_roast import run_pipeline
+    result = await run_pipeline(acct, out, topic=topic, num_turns=num_turns, tone_plan=tone_plan)
+    return {"path": result, "topic": topic, "turns": []}
+
+
+async def _run_x_comments(acct, out, topic, num_turns, tone_plan=None):
+    from src.generation.pipeline_impl.x_comments import run_pipeline
+    result = await run_pipeline(acct, out, topic=topic, num_turns=num_turns, tone_plan=tone_plan)
+    return {"path": result, "topic": topic, "turns": []}
+
+
+async def _run_phone_call(acct, out, topic, num_turns, tone_plan=None):
+    from src.generation.pipeline_impl.phone_call import run_pipeline
+    result = await run_pipeline(acct, out, topic=topic, num_turns=num_turns, tone_plan=tone_plan)
+    return {"path": result, "topic": topic, "turns": []}
+
+
+async def _run_storytime(acct, out, topic, num_turns):
+    from src.generation.pipeline_impl.storytime import run_pipeline
+    chars = _get_chars(acct)
+    result = run_pipeline(chars[0], topic or "fitness", out, paragraphs=num_turns or 4)
+    return {"path": result, "topic": topic, "turns": []}
+
+
+def _get_chars(acct):
+    """Extract characters from account config."""
+    chars = acct.get("characters", [])
+    if len(chars) < 2:
+        return [
+            {"name": "Goku", "persona": "cheerful naive", "tts_voice": "en-US-GuyNeural"},
+            {"name": "Vegeta", "persona": "proud angry", "tts_voice": "en-US-SteffanNeural"}
+        ]
+    return [
+        {"name": chars[0], "persona": "character", "tts_voice": "en-US-GuyNeural"},
+        {"name": chars[1], "persona": "character", "tts_voice": "en-US-SteffanNeural"}
+    ]
 
 
 def available_pipelines() -> List[str]:

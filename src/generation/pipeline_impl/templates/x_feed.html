@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { width: 608px; height: 1080px; overflow: hidden; }
+body {
+  font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  background: #000000;
+  color: #E7E9EA;
+  position: relative;
+}
+
+/* Header */
+#header {
+  position: fixed; top: 0; left: 0; right: 0;
+  height: 53px;
+  background: rgba(0,0,0,0.65);
+  backdrop-filter: blur(12px);
+  display: flex; align-items: center;
+  padding: 0 16px;
+  z-index: 10;
+  border-bottom: 1px solid #2F3336;
+}
+#header .back { color: #E7E9EA; font-size: 20px; margin-right: 20px; width: 20px; }
+#header .title { font-size: 17px; font-weight: 700; flex: 1; }
+#header .more { color: #E7E9EA; font-size: 20px; }
+
+/* Feed */
+#feed {
+  position: absolute;
+  top: 53px; left: 0; right: 0; bottom: 56px;
+  overflow-y: scroll;
+}
+
+/* Post */
+.post {
+  padding: 12px 16px;
+  border-bottom: 1px solid #2F3336;
+}
+
+.post-header {
+  display: flex; align-items: center;
+  margin-bottom: 4px;
+}
+.post-avatar {
+  width: 40px; height: 40px; border-radius: 50%;
+  overflow: hidden; margin-right: 12px; flex-shrink: 0;
+  background: #1D9BF0;
+}
+.post-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.post-userinfo { flex: 1; min-width: 0; }
+.post-name-row {
+  display: flex; align-items: center; gap: 4px;
+}
+.post-name { font-size: 15px; font-weight: 700; color: #E7E9EA; white-space: nowrap; }
+.verified {
+  width: 18px; height: 18px; flex-shrink: 0;
+  background: #1D9BF0; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+}
+.verified svg { width: 11px; height: 11px; fill: #fff; }
+.post-handle { font-size: 14px; color: #71767B; white-space: nowrap; }
+.post-time { font-size: 14px; color: #71767B; margin-left: 2px; white-space: nowrap; }
+.post-more { color: #71767B; font-size: 18px; margin-left: auto; padding: 0 0 0 8px; }
+
+.replying-to {
+  font-size: 14px; color: #71767B;
+  margin-bottom: 2px; margin-left: 52px;
+}
+.replying-to .mention { color: #1D9BF0; }
+
+.post-text {
+  font-size: 15px; line-height: 20px;
+  color: #E7E9EA;
+  margin: 2px 0 10px;
+  margin-left: 52px;
+  word-wrap: break-word;
+}
+.post-text .mention { color: #1D9BF0; }
+.post-text .hashtag { color: #1D9BF0; }
+
+.post-actions {
+  display: flex; justify-content: space-between;
+  margin-left: 52px;
+  max-width: 380px;
+  padding-right: 16px;
+}
+.action {
+  display: flex; align-items: center; gap: 6px;
+  color: #71767B; font-size: 13px;
+}
+.action svg { width: 18px; height: 18px; fill: #71767B; }
+.action .count { min-width: 16px; }
+
+/* Original post gets engagement stats */
+.post.original .post-stats {
+  display: flex; gap: 16px;
+  margin-left: 52px;
+  padding: 10px 0 12px;
+  border-bottom: 1px solid #2F3336;
+  font-size: 14px; color: #71767B;
+}
+.post.original .post-stats .stat b { color: #E7E9EA; font-weight: 700; }
+.post.original .post-actions { padding-top: 10px; }
+
+/* Bottom nav */
+#bottom-nav {
+  position: fixed; bottom: 0; left: 0; right: 0;
+  height: 56px;
+  background: rgba(0,0,0,0.85);
+  backdrop-filter: blur(12px);
+  display: flex; justify-content: space-around; align-items: center;
+  border-top: 1px solid #2F3336;
+  z-index: 10;
+}
+#bottom-nav svg { width: 24px; height: 24px; fill: #E7E9EA; }
+</style>
+</head>
+<body>
+
+<div id="header">
+  <div class="back">&#x2190;</div>
+  <div class="title">Post</div>
+  <div class="more">&#x22EF;</div>
+</div>
+
+<div id="feed"></div>
+
+<div id="bottom-nav">
+  <svg viewBox="0 0 24 24"><path d="M12 2.5 2 12h3v9h6v-6h2v6h6v-9h3z"/></svg>
+  <svg viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7 14 5 12 5 9.5S7 5 9.5 5 14 7 14 9.5 12 14 9.5 14z"/></svg>
+  <svg viewBox="0 0 24 24"><path d="M12 22a2.3 2.3 0 0 1-2.2-1.6l-.1-.4H6a2 2 0 0 1-2-2v-.5l1-5.5H3.5a1.5 1.5 0 0 1 0-3h17a1.5 1.5 0 0 1 0 3H19l1 5.5v.5a2 2 0 0 1-2 2h-3.7l-.1.4A2.3 2.3 0 0 1 12 22zM7 18h10l-1-6H8z"/></svg>
+  <svg viewBox="0 0 24 24"><path d="M20 2H4a2 2 0 0 0-2 2v18l4-4h14a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2zm-9 9H7V9h4zm6 0h-4V9h4zm-6-4H7V5h4zm6 0h-4V5h4z"/></svg>
+</div>
+
+<script>
+window.setFeedState = function(state) {
+  const feed = document.getElementById('feed');
+  feed.innerHTML = '';
+
+  state.posts.forEach((p, i) => {
+    const post = document.createElement('div');
+    post.className = 'post' + (i === 0 ? ' original' : '');
+
+    const isReply = p.is_reply !== false && i > 0;
+    let headerExtra = '';
+    if (isReply) {
+      headerExtra = '<div class="replying-to">Replying to <span class="mention">@' +
+        (state.posts[i-1].handle || state.posts[i-1].user.toLowerCase()) + '</span></div>';
+    }
+
+    // Process text: mentions and hashtags
+    let textHtml = (p.text || '')
+      .replace(/@(\w+)/g, '<span class="mention">@$1</span>')
+      .replace(/#(\w+)/g, '<span class="hashtag">#$1</span>');
+
+    post.innerHTML =
+      '<div class="post-header">' +
+        '<div class="post-avatar"><img src="' + p.avatar + '"></div>' +
+        '<div class="post-userinfo">' +
+          '<div class="post-name-row">' +
+            '<span class="post-name">' + p.user + '</span>' +
+            '<span class="verified"><svg viewBox="0 0 24 24"><path d="M9 16.2 4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4z"/></svg></span>' +
+          '</div>' +
+          '<div><span class="post-handle">@' + (p.handle || p.user.toLowerCase()) + '</span>' +
+          '<span class="post-time"> · ' + (p.time || '1h') + '</span></div>' +
+        '</div>' +
+        '<div class="post-more">&#x22EF;</div>' +
+      '</div>' +
+      headerExtra +
+      '<div class="post-text">' + textHtml + '</div>' +
+      (i === 0 ?
+        '<div class="post-stats">' +
+          '<span class="stat"><b>' + (p.replies || 4) + '</b> Replies</span>' +
+          '<span class="stat"><b>' + (p.reposts || 12) + '</b> Reposts</span>' +
+          '<span class="stat"><b>' + (p.likes || 35) + '</b> Likes</span>' +
+          '<span class="stat"><b>' + (p.views || 408) + '</b> Views</span>' +
+        '</div>' : '') +
+      '<div class="post-actions">' +
+        '<div class="action"><svg viewBox="0 0 24 24"><path d="M20 2H4a2 2 0 0 0-2 2v18l4-4h14a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2z"/></svg><span class="count">' + (p.replies || 4) + '</span></div>' +
+        '<div class="action"><svg viewBox="0 0 24 24"><path d="M7 7h4v2H7v4H5V9H3V7h4zm10 10h-4v-2h4v-4h2v4h2v2h-4zM4 4h16v2H4zm0 14h6v2H4z"/></svg><span class="count">' + (p.reposts || 12) + '</span></div>' +
+        '<div class="action"><svg viewBox="0 0 24 24"><path d="M12 21.35 10.55 20C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54z"/></svg><span class="count">' + (p.likes || 35) + '</span></div>' +
+        '<div class="action"><svg viewBox="0 0 24 24"><path d="M4 4h16v2H4zm8 4 6 4v10h-4v-6h-4v6H6V12z"/></svg><span class="count">' + (p.views || 408) + '</span></div>' +
+        '<div class="action"><svg viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z"/></svg><span class="count"></span></div>' +
+      '</div>';
+
+    feed.appendChild(post);
+  });
+
+  // Scroll to show latest
+  feed.scrollTop = feed.scrollHeight;
+};
+</script>
+</body>
+</html>

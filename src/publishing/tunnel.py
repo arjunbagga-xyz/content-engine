@@ -56,50 +56,102 @@ def _cf_binary() -> str | None:
 
 
 def _static_server_running() -> bool:
-    import psutil
-    for p in psutil.process_iter(["pid", "cmdline", "name"]):
-        cl = " ".join(p.info["cmdline"] or [])
-        if p.info["name"] == "python.exe" and "http.server" in cl and str(ORIGIN_PORT) in cl:
-            return True
-    return False
+    """Check if the origin HTTP server is listening on ORIGIN_PORT.
+    Matches ranged_server (ThreadingHTTPServer) not just http.server."""
+    import socket
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.settimeout(2)
+    result = s.connect_ex(("127.0.0.1", ORIGIN_PORT)) == 0
+    s.close()
+    return result
 
 
 def _start_static_server() -> None:
-    """Start a PERSISTENT static http server on ORIGIN_PORT serving ORIGIN_DIR.
-
-    Uses our RangedHandler (HTTP Range support) so Meta's transcoder can fetch
-    the reel via byte-range requests. A persistent server (kept alive for the
-    whole publish lifetime) is far more reliable than the publisher's transient
-    internal server, which Meta sometimes fetches while it is mid-(re)start.
+    """Start a persistent static HTTP server on ORIGIN_PORT serving ORIGIN_DIR.
+    
+    Idempotent: checks if port is already open before starting.
+    Uses standalone HTTP server (no src import dependency).
     """
+    if _static_server_running():
+        logger.debug("Origin server already running on :%d", ORIGIN_PORT)
+        return
+    
+    logger.info("Starting origin server on :%d serving %s", ORIGIN_PORT, ORIGIN_DIR)
+    
+    server_code = f'''
+import http.server
+import socketserver
+import os
+
+ORIGIN_DIR = r"{str(ORIGIN_DIR)}"
+
+class Handler(http.server.SimpleHTTPRequestHandler):
+    def do_GET(self):
+        path = self.path.lstrip("/")
+        full = os.path.join(ORIGIN_DIR, path)
+        if os.path.exists(full):
+            sz = os.path.getsize(full)
+            self.send_response(200)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Content-Length", str(sz))
+            self.send_header("Accept-Ranges", "bytes")
+            self.end_headers()
+            with open(full, "rb") as f:
+                self.wfile.write(f.read())
+        else:
+            self.send_response(404)
+            self.end_headers()
+    
+    def do_HEAD(self):
+        path = self.path.lstrip("/")
+        full = os.path.join(ORIGIN_DIR, path)
+        if os.path.exists(full):
+            sz = os.path.getsize(full)
+            self.send_response(200)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Content-Length", str(sz))
+            self.send_header("Accept-Ranges", "bytes")
+            self.end_headers()
+        else:
+            self.send_response(404)
+            self.end_headers()
+    
+    def log_message(self, format, *args):
+        pass
+
+class Server(socketserver.ThreadingMixIn, socketserver.TCPServer):
+    allow_reuse_address = True
+    daemon_threads = True
+
+with Server(("127.0.0.1", {ORIGIN_PORT}), Handler) as httpd:
+    httpd.serve_forever()
+'''
+    
     bin_path = str(ROOT / ".venv" / "Scripts" / "python.exe")
     if not os.path.exists(bin_path):
         from shutil import which
         bin_path = which("python") or which("python3")
-    # serve ORIGIN_DIR via ranged_server (supports Range; fixes 502 on large files)
-    server_code = (
-        "from src.publishing.ranged_server import serve;"
-        "import threading;"
-        f"httpd=serve({str(ORIGIN_DIR)!r},{ORIGIN_PORT});"
-        "threading.Thread(target=httpd.serve_forever,daemon=True).start();"
-        "import time;time.sleep(6000)"
-    )
+    
+    # Write server script to temp file
+    server_script = ROOT / "scratch" / "_origin_server.py"
+    server_script.parent.mkdir(parents=True, exist_ok=True)
+    server_script.write_text(server_code)
+    
     subprocess.Popen(
-        [bin_path, "-c", server_code],
+        [bin_path, "-u", str(server_script)],
         cwd=str(ROOT),
-        creationflags=0x00000008,  # DETACHED_PROCESS on Windows
+        creationflags=0x00000008,  # DETACHED_PROCESS
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
-    for _ in range(10):
-        try:
-            import socket
-            s = socket.socket()
-            s.connect(("127.0.0.1", ORIGIN_PORT))
-            s.close()
+    
+    for _ in range(20):
+        time.sleep(0.5)
+        if _static_server_running():
+            logger.info("Origin server started on :%d", ORIGIN_PORT)
             return
-        except Exception:
-            time.sleep(0.5)
+    
+    logger.warning("Origin server failed to start on :%d", ORIGIN_PORT)
 
 
 def _ensure_static_server() -> None:
@@ -349,11 +401,11 @@ def restart_tunnel() -> str:
 
 
 def stop_tunnel() -> None:
-    """Tear down the tunnel + origin server. Call at the END of the publish job so
-    cloudflared/ngrok + the static http.server do NOT linger (heat/resource leak fix).
-
-    Kills cloudflared, ngrok, and the persistent python http.server bound to
-    ORIGIN_PORT. Safe to call when nothing is running (no-ops).
+    """Tear down the tunnel (cloudflared/ngrok) but KEEP the origin server running.
+    
+    The origin server is a persistent service that should survive between publishes.
+    Only the tunnel processes are killed (cloudflared, ngrok).
+    Safe to call when nothing is running (no-ops).
     """
     import psutil
     # 1. Kill cloudflared
@@ -370,18 +422,11 @@ def stop_tunnel() -> None:
                 p.kill()
         except Exception:
             pass
-    # 3. Kill the static-origin http.server on ORIGIN_PORT (match by port, not
-    #    cmdline — our server runs via ranged_server, not literal 'http.server').
-    for c in psutil.net_connections(kind="tcp"):
-        if c.laddr.port == ORIGIN_PORT and c.pid and c.pid != 0:
-            try:
-                psutil.Process(c.pid).kill()
-            except Exception:
-                pass
+    # Note: origin server is NOT killed - it persists between publishes
     # 4. Invalidate the cached URL so the next publish re-establishes a fresh tunnel.
     try:
         if URL_FILE.exists():
             URL_FILE.write_text("")
     except Exception:
         pass
-    logger.info("stop_tunnel(): cloudflared + ngrok + origin server torn down.")
+    logger.info("stop_tunnel(): cloudflared + ngrok torn down. Origin server persists.")

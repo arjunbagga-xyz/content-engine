@@ -62,6 +62,15 @@ class GenerateJob(JobBase):
             acct = SR.SpriteReactor._get_account(char_id) or {}
             pn = pipeline_arg or PL.select_pipeline(acct)
             prod = PL.get_producer(pn)
+            # Defensive: ensure the concrete subtopic (from planner's LLM) is present.
+            # Without this, legacy posts (topic=None) would generate generic garbage
+            # using the raw YAML theme universe instead of the resolved subtopic.
+            if not topic or not str(topic).strip():
+                # Fallback: use the post's stored topic (should be set by planner). If
+                # still missing, fail loudly so the planner gap is visible, not silent.
+                topic = (post.topic or "").strip()
+                if not topic:
+                    raise RuntimeError(f"post {post.id} has no concrete subtopic (post.topic={post.topic!r}); planner did not resolve subtopic. Check subtopic_io.log and plan_job.py.")
             self.logger.info("[post %s] pipeline=%s topic=%s", post.id, pn, topic)
             # Per-turn tone plan resolved by the planner (stored on the post).
             tone_plan = None

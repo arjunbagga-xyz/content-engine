@@ -197,7 +197,7 @@ PUBLISH_RETRIES = 6
 GEN_BACKOFF_S = 60
 PUB_BACKOFF_S = 120
 GEN_TIMEOUT_S = 3600   # 60 min backstop per render (CPU was hitting 40min; CUDA+NVENC now ~5-8min)
-PUB_TIMEOUT_S = 600    # 10 min backstop per publish
+PUB_TIMEOUT_S = 1200   # 20 min backstop per publish
 MAX_REGEN = 3         # times a failed generate job is re-queued before giving up
 MAX_REPUB = 3         # times a failed publish job is re-queued before giving up
 
@@ -257,7 +257,14 @@ def _now():
 
 def _repo_paths():
     repo = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    py = os.path.join(repo, ".venv", "Scripts", "python.exe")
+    # The main venv may live inside the repo (Windows: repo/.venv) or beside it
+    # (Linux laptop: repo-venv). Prefer an existing path; never assume one layout.
+    candidates = [
+        os.path.join(repo, ".venv"),
+        os.path.join(os.path.dirname(repo), os.path.basename(repo) + "-venv"),
+    ]
+    _venv = next((p for p in candidates if os.path.isdir(p)), candidates[0])
+    py = os.path.join(_venv, "Scripts", "python.exe") if os.name == "nt" else os.path.join(_venv, "bin", "python")
     rj = os.path.join(repo, "run_job.py")
     return py, rj
 
@@ -268,8 +275,8 @@ def _run_job(argv_list: list, timeout_s: int) -> int:
     repo = os.path.dirname(rj)
     full = [py, rj] + argv_list
     proc = subprocess.Popen(full, cwd=repo,
-                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                             creationflags=0x00000008)
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                            **({"creationflags": 0x00000008} if os.name == "nt" else {}))
     try:
         proc.wait(timeout=timeout_s)
     except subprocess.TimeoutExpired:
@@ -393,7 +400,19 @@ def _drain_publishes(db, batch: str, now: datetime.datetime) -> dict:
         if post.state == "published":
             job.status = "done"; logger.info("[batch %s] post %s PUBLISHED", batch, post.id); done += 1
         elif rc == 124:
-            job.status = "failed"; job.last_error = "publish timeout"; post.state = "failed"; db.commit(); failed += 1
+            # Retry loop: try again up to 3 times
+            for attempt in range(2, 4):
+                logger.warning("[batch %s] post %s publish timeout; retry %d/3", batch, post.id, attempt)
+                rc = _run_job(json.loads(job.argv)[1:], PUB_TIMEOUT_S)
+                post = db.query(ContentPost).get(job.post_id)
+                if post.state == "published":
+                    job.status = "done"; logger.info("[batch %s] post %s PUBLISHED on retry %d", batch, post.id, attempt); done += 1
+                elif rc == 124:
+                    continue
+                else:
+                    break
+            else:
+                job.status = "failed"; job.last_error = "publish timeout"; post.state = "failed"; db.commit(); failed += 1
         elif rc == 3:
             # publish_job reports "not due yet" (scheduled_time in the future). This
             # is correct spacing, NOT a failure — re-queue the job (no retry/backoff
@@ -530,6 +549,25 @@ def schedule_publish(post: ContentPost, delay_min: int = 2) -> None:
         db.close()
 
 
+def _requeue_publish(post_id: int, delay_min: int = 10):
+    """Re-queue a publish job with a delay (called by publish_job on failure)."""
+    db = SessionLocal()
+    try:
+        j = db.query(ScheduledJob).filter(
+            ScheduledJob.post_id == post_id,
+            ScheduledJob.step == "publish",
+            ScheduledJob.status.in_(["fired", "failed"]),
+        ).order_by(ScheduledJob.fire_at.desc()).first()
+        if j:
+            j.status = "queued"
+            j.fire_at = datetime.datetime.now() + datetime.timedelta(minutes=delay_min)
+            j.last_error = f"re-queued after failure (delay={delay_min}min)"
+            j.retry_count = (j.retry_count or 0) + 1
+            db.commit()
+    finally:
+        db.close()
+
+
 def mark_done(post_id: int, step: str, ok: bool, error: str = None):
     """Close the ledger row for a post/step (called by publish_job)."""
     db = SessionLocal()
@@ -551,7 +589,8 @@ def mark_done(post_id: int, step: str, ok: bool, error: str = None):
 def fire_due(now: datetime.datetime = None, dry_run: bool = False) -> dict:
     """Legacy single-unit fire path (kept for compatibility; the planner now
     primarily uses dispatch_due). Fires at most one due job."""
-    now = now or _now()
+    if now is None:
+        now = _now()
     db = SessionLocal()
     summary = {"fired": 0, "done": 0, "skipped": 0, "blocked": 0, "dry": dry_run}
     try:
@@ -577,7 +616,7 @@ def fire_due(now: datetime.datetime = None, dry_run: bool = False) -> dict:
             py, rj = _repo_paths()
             proc = subprocess.Popen([py, rj] + argv[1:], cwd=os.path.dirname(rj),
                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                                    creationflags=0x00000008)
+                                    **({"creationflags": 0x00000008} if os.name == "nt" else {}))
             job.status = "fired"; job.last_error = f"pid={proc.pid}"; db.commit()
             summary["fired"] += 1; break
         return summary
